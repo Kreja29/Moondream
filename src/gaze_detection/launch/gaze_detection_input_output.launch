@@ -1,0 +1,17 @@
+<launch>
+  <!-- Arguments -->
+  <arg name="input_dir" default="$(find gaze_detection)/input" />
+  <arg name="output_dir" default="$(find gaze_detection)/output" />
+  <arg name="visualization" default="true" />
+  <arg name="model_id" default="vikhyatk/moondream2" />
+  <arg name="model_revision" default="2025-01-09" />
+  
+  <!-- Launch the gaze detection input/output node -->
+  <node pkg="gaze_detection" type="gaze_detection_input_output.py" name="gaze_detection_input_output_node" output="screen">
+    <param name="input_dir" value="$(arg input_dir)" />
+    <param name="output_dir" value="$(arg output_dir)" />
+    <param name="visualization" value="$(arg visualization)" />
+    <param name="model_id" value="$(arg model_id)" />
+    <param name="model_revision" value="$(arg model_revision)" />
+  </node>
+</launch> 

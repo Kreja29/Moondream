@@ -1,0 +1,17 @@
+<launch>
+  <!-- Arguments -->
+  <arg name="input_topic" default="/camera/image_raw" />
+  <arg name="output_topic" default="/gaze_detection/image" />
+  <arg name="visualization" default="true" />
+  <arg name="model_id" default="vikhyatk/moondream2" />
+  <arg name="model_revision" default="2025-01-09" />
+  
+  <!-- Launch the gaze detection node -->
+  <node pkg="gaze_detection" type="gaze_detection_node.py" name="gaze_detection_node" output="screen">
+    <param name="input_topic" value="$(arg input_topic)" />
+    <param name="output_topic" value="$(arg output_topic)" />
+    <param name="visualization" value="$(arg visualization)" />
+    <param name="model_id" value="$(arg model_id)" />
+    <param name="model_revision" value="$(arg model_revision)" />
+  </node>
+</launch>

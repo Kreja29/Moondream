@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+  moondream:
+    image: ros-moondream-gaze:latest
+    container_name: moondream_container
+    volumes:
+      - ./src:/workspace/src
+      - ./check_setup.sh:/workspace/check_setup.sh
+      - ./setup_ros_env.sh:/workspace/setup_ros_env.sh
+    working_dir: /workspace
+    command: >
+      bash -c "
+      chmod +x /workspace/check_setup.sh &&
+      chmod +x /workspace/setup_ros_env.sh &&
+      /workspace/check_setup.sh &&
+      /workspace/setup_ros_env.sh &&
+      exec bash"
+    stdin_open: true
+    tty: true
+    restart: "no"
