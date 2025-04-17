@@ -10,34 +10,55 @@ ENV LANG=en_US.UTF-8
 ENV LANGUAGE=en_US:en
 ENV LC_ALL=en_US.UTF-8
 
-# Install Python 3.9
+# Install system dependencies first
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
     curl \
-    && add-apt-repository ppa:deadsnakes/ppa \
+    gnupg2 \
+    lsb-release \
+    git \
+    wget \
+    vim \
+    tmux \
+    nano \
+    libvips42 \
+    libvips-dev \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python 3.8 (default from Ubuntu 20.04) and Python 3.9
+RUN add-apt-repository ppa:deadsnakes/ppa \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
+    python3.8 \
+    python3.8-dev \
+    python3.8-distutils \
     python3.9 \
     python3.9-dev \
     python3.9-distutils \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Make Python 3.9 the default Python
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.8 1 && \
-    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 2 && \
-    update-alternatives --set python3 /usr/bin/python3.9
-
-# Install pip for Python 3.9
+# Install pip for both Python versions
 RUN curl -s https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
+    python3.8 get-pip.py && \
     python3.9 get-pip.py && \
     rm get-pip.py
 
-# Install ROS Noetic
+# Create virtual environments for both Python versions
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gnupg2 \
-    lsb-release \
+    python3.8-venv \
+    python3.9-venv \
     && rm -rf /var/lib/apt/lists/*
 
+# Create Python virtual environments
+RUN python3.8 -m venv /opt/venv_py38 && \
+    python3.9 -m venv /opt/venv_py39
+
+# Make Python 3.8 the default Python for ROS
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.8 1
+
+# Install ROS Noetic (which will use Python 3.8)
 RUN curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | apt-key add -
 RUN echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list
 
@@ -50,45 +71,34 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-catkin-tools \
     python3-osrf-pycommon \
     ros-noetic-cv-bridge \
-    && rm -rf /var/lib/apt/lists/*
-    
-RUN apt-get update && apt-get install -y --no-install-recommends \  
     python3-netifaces \
+    python3-opencv \
     && rm -rf /var/lib/apt/lists/*
-
 
 # Initialize rosdep
 RUN rosdep init && rosdep update
 
-# Configure environment
+# Configure environment 
 SHELL ["/bin/bash", "-c"]
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    python3-dev \
-    python3-opencv \
-    git \
-    wget \
-    vim \
-    tmux \
-    nano \
-    libvips42 \
-    libvips-dev \
-    ffmpeg \
+# Install Python 3.8 dependencies for ROS
+RUN . /opt/venv_py38/bin/activate && \
+    pip install --upgrade pip setuptools wheel && \
+    pip install netifaces opencv-python && \
+    deactivate
+
+# 1) Install OpenCV runtime libs so the manylinux wheel works at runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 \
+    libgl1-mesa-glx \
     && rm -rf /var/lib/apt/lists/*
 
-# Set up Python environment
-RUN pip3 install --upgrade pip
-
-RUN pip3 install --upgrade pip setuptools wheel
-RUN pip3 install --upgrade importlib_metadata
-
-RUN pip3 install netifaces
-
-# Install CPU dependencies first
-RUN pip3 install \
+# 2) Activate the venv, bump pip & friends, install everything else in one go…
+RUN . /opt/venv_py39/bin/activate && \
+    python -m pip install --upgrade pip setuptools wheel && \
+    pip install \
     numpy>=1.24.0 \
-    torchvision==0.19.1 \
+    torchvision==0.16.2 \
     opencv-python>=4.8.0 \
     transformers==4.44.0 \
     safetensors \
@@ -100,33 +110,38 @@ RUN pip3 install \
     pyvips==2.2.3 \
     pyvips-binary==8.16.0 \
     huggingface-hub==0.24.0 \
-    gradio==4.38.1
+    gradio==4.38.1 && \
+    deactivate
 
-# Install PyTorch with CUDA support (will be used if GPU is available)
-RUN pip3 install torch==2.4.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+# 3) …then install torch via the PyTorch index…
+RUN . /opt/venv_py39/bin/activate && \
+    pip install torch==2.1.2+cu118 \
+    --index-url https://download.pytorch.org/whl/cu118 && \
+    deactivate
 
-RUN pip3 install datasets==3.1.0 editdistance==0.8.1
+# 4) Install small extras
+RUN . /opt/venv_py39/bin/activate && \
+    pip install datasets==3.1.0 editdistance==0.8.1 rospkg catkin_pkg netifaces && \
+    deactivate
 
-# Create and set up the catkin workspace
+# Create and set up the catkin workspace structure
 WORKDIR /workspace
 RUN mkdir -p /workspace/src
-
-# Copy your gaze_detection package to the workspace
-RUN mkdir -p /workspace/src/gaze_detection/scripts
-RUN mkdir -p /workspace/src/gaze_detection/launch
-RUN mkdir -p /workspace/src/gaze_detection/input
-RUN mkdir -p /workspace/src/gaze_detection/output
-
-# Set up the workspace
-WORKDIR /workspace
 RUN /bin/bash -c "source /opt/ros/noetic/setup.bash && \
     catkin init && \
     catkin config --extend /opt/ros/noetic && \
     catkin build"
 
-# Add setup files to bashrc
+# Create basic wrapper scripts for Python environments
+RUN echo '#!/bin/bash\nsource /opt/venv_py38/bin/activate\nexec "$@"\n' > /usr/local/bin/with_py38 && \
+    echo '#!/bin/bash\nsource /opt/venv_py39/bin/activate\nexec "$@"\n' > /usr/local/bin/with_py39 && \
+    chmod +x /usr/local/bin/with_py38 /usr/local/bin/with_py39
+
+# Add aliases to bashrc for convenience
 RUN echo "source /opt/ros/noetic/setup.bash" >> ~/.bashrc && \
-    echo "source /workspace/devel/setup.bash" >> ~/.bashrc
+    echo 'alias py38="with_py38 python3"' >> ~/.bashrc && \
+    echo 'alias py39="with_py39 python3"' >> ~/.bashrc && \
+    echo 'if [ -f /workspace/devel/setup.bash ]; then source /workspace/devel/setup.bash; fi' >> ~/.bashrc
 
 # Create GPU detection script
 COPY ./detect_gpu.sh /detect_gpu.sh

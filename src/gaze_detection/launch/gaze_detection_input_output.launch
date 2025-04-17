@@ -7,7 +7,7 @@
   <arg name="model_revision" default="2025-01-09" />
   
   <!-- Launch the gaze detection input/output node -->
-  <node pkg="gaze_detection" type="gaze_detection_input_output.py" name="gaze_detection_input_output_node" output="screen">
+  <node pkg="gaze_detection" type="run_gaze_detection_input_output_wrapper.sh" name="gaze_detection_input_output_node" output="screen">
     <param name="input_dir" value="$(arg input_dir)" />
     <param name="output_dir" value="$(arg output_dir)" />
     <param name="visualization" value="$(arg visualization)" />

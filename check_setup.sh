@@ -1,24 +1,47 @@
 #!/bin/bash
 
-# Check if the workspace has already been built
-if [ ! -d "/workspace/devel" ] || [ ! -d "/workspace/build" ]; then
-    echo "Catkin workspace not built yet. Building now..."
-    source /opt/ros/noetic/setup.bash
-    cd /workspace
-    catkin build
-    echo "Workspace built successfully!"
+echo "Checking environment setup..."
+
+# Check Python versions
+echo -n "Python 3.8: "
+with_py38 python3 --version
+
+echo -n "Python 3.9: "
+with_py39 python3 --version
+
+# Check ROS installation
+echo -n "ROS Noetic: "
+if [ -d "/opt/ros/noetic" ]; then
+  echo "Installed"
 else
-    echo "Catkin workspace already built. Skipping build step."
+  echo "Not found"
 fi
 
-# Make all Python scripts executable
-echo "Making Python scripts executable..."
-find /workspace/src -name "*.py" -exec chmod +x {} \;
+# Check if virtual environments exist
+echo -n "Python 3.8 venv: "
+if [ -d "/opt/venv_py38" ]; then
+  echo "Found"
+else
+  echo "Not found"
+fi
 
-# Make sure the input and output directories exist
-echo "Ensuring input and output directories exist..."
-mkdir -p /workspace/src/gaze_detection/input
-mkdir -p /workspace/src/gaze_detection/output
+echo -n "Python 3.9 venv: "
+if [ -d "/opt/venv_py39" ]; then
+  echo "Found"
+else
+  echo "Not found"
+fi
 
-echo "Setup complete!"
+# Check for wrapper scripts
+echo -n "Python wrapper scripts: "
+if [ -f "/usr/local/bin/with_py38" ] && [ -f "/usr/local/bin/with_py39" ]; then
+  echo "Found"
+else
+  echo "Not found"
+fi
 
+# Check GPU availability
+echo "Checking GPU availability..."
+/detect_gpu.sh
+
+echo "Setup check complete."

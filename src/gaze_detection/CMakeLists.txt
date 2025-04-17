@@ -17,7 +17,12 @@ include_directories(
 )
 
 catkin_install_python(PROGRAMS
-  scripts/gaze_detection_node.py
+  scripts/gaze_detection_input_output.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+install(PROGRAMS
+  scripts/run_gaze_detection_wrapper.sh
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
