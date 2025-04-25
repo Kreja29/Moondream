@@ -28,7 +28,7 @@ class GazeDetectionVideoProcessor:
         self.visualization = rospy.get_param('~visualization', True)
         self.model_id = rospy.get_param('~model_id', "vikhyatk/moondream2")
         self.model_revision = rospy.get_param('~model_revision', "2025-01-09")
-        self.process_rate = rospy.get_param('~process_rate', 1) # Process every n frames
+        self.process_rate = rospy.get_param('~process_rate', 10) # Process every n frames
         
         # Processing stats
         self.processing_times = []
