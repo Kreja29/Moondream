@@ -68,9 +68,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-rosinstall \
     python3-rosinstall-generator \
     python3-wstool \
+    build-essential \
     python3-catkin-tools \
     python3-osrf-pycommon \
     ros-noetic-cv-bridge \
+    ros-noetic-rgbd-launch \
+    ros-noetic-tf2-sensor-msgs \
     python3-netifaces \
     python3-opencv \
     && rm -rf /var/lib/apt/lists/*
@@ -127,6 +130,24 @@ RUN . /opt/venv_py39/bin/activate && \
 # Create and set up the catkin workspace structure
 WORKDIR /workspace
 RUN mkdir -p /workspace/src
+
+# Install libfreenect
+RUN mkdir -p ~/external_repos && \
+    cd ~/external_repos && \
+    git clone https://github.com/OpenKinect/libfreenect.git && \
+    cd libfreenect && \
+    mkdir build && \
+    cd build && \
+    cmake -L .. && \
+    make -j 4 && \
+    make install
+
+
+# Clone the freenect ROS packages into the workspace
+WORKDIR /workspace/src
+RUN git clone https://github.com/ros-drivers/freenect_stack.git
+
+WORKDIR /workspace
 RUN /bin/bash -c "source /opt/ros/noetic/setup.bash && \
     catkin init && \
     catkin config --extend /opt/ros/noetic && \

@@ -51,3 +51,9 @@ cd C:\Users\Marko\Desktop\TU\MOONDREAM\ros_moondream_workspace
 # Gaze detection video processor node
 	/opt/venv_py39/bin/python3 /workspace/src/gaze_detection/scripts/gaze_detection_video_processing.py
 
+
+
+https://wiki.ros.org/rgbd_launch
+https://wiki.ros.org/freenect_camera#Migration_guide
+roslaunch freenect_launch freenect-xyz.launch
+roslaunch freenect_launch freenect-registered-xyzrgb.launch

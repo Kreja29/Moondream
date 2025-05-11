@@ -12,32 +12,32 @@ with_py39 python3 --version
 # Check ROS installation
 echo -n "ROS Noetic: "
 if [ -d "/opt/ros/noetic" ]; then
-  echo "Installed"
+ echo "Installed"
 else
-  echo "Not found"
+ echo "Not found"
 fi
 
 # Check if virtual environments exist
 echo -n "Python 3.8 venv: "
 if [ -d "/opt/venv_py38" ]; then
-  echo "Found"
+ echo "Found"
 else
-  echo "Not found"
+ echo "Not found"
 fi
 
 echo -n "Python 3.9 venv: "
 if [ -d "/opt/venv_py39" ]; then
-  echo "Found"
+ echo "Found"
 else
-  echo "Not found"
+ echo "Not found"
 fi
 
 # Check for wrapper scripts
 echo -n "Python wrapper scripts: "
 if [ -f "/usr/local/bin/with_py38" ] && [ -f "/usr/local/bin/with_py39" ]; then
-  echo "Found"
+ echo "Found"
 else
-  echo "Not found"
+ echo "Not found"
 fi
 
 # Check GPU availability
