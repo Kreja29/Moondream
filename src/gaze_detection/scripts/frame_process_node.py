@@ -3,23 +3,27 @@
 import os
 import sys
 import rospy
+import ros_numpy
 import numpy as np
 import cv2
+import open3d
 from PIL import Image as PILImage
 from transformers import AutoModelForCausalLM
 import torch
-from sensor_msgs.msg import PointCloud2
+from sensor_msgs.msg import PointCloud2, Image
 import sensor_msgs.point_cloud2 as pc2
+from cv_bridge import CvBridge
 from typing import List, Dict, Optional, Tuple, Any
 import traceback
+from message_filters import ApproximateTimeSynchronizer, Subscriber
 
 class GazeDetectionProcessor:
     def __init__(self):
         # Get ROS parameters
         self.model_id = rospy.get_param('~model_id', "vikhyatk/moondream2")
         self.model_revision = rospy.get_param('~model_revision', "2025-01-09")
-        
-        # Processing stats
+
+        self.bridge = CvBridge()
         self.processing_times = []
         self.processed_count = 0
         
@@ -29,18 +33,16 @@ class GazeDetectionProcessor:
             rospy.logerr("Failed to initialize Moondream 2 model. Exiting.")
             sys.exit(1)
 
-        # Subscribe to point cloud topic
-        self.pointcloud_sub = rospy.Subscriber(
-            "/kinect/depth_registered/points",
-            PointCloud2,
-            self.pointcloud_callback,
-            queue_size=1
-        )
+        # Message filters for synchronized callback (Subscription)
+        self.rgb_sub = Subscriber("/camera/rgb/image_color", Image)
+        self.pc_sub = Subscriber("/camera/depth_registered/points", PointCloud2)
+
+        self.ts = ApproximateTimeSynchronizer([self.rgb_sub, self.pc_sub], queue_size=10, slop=0.1)
+        self.ts.registerCallback(self.synced_callback)
         
         rospy.loginfo("GazeDetectionProcessor initialized")
 
     def initialize_model(self) -> Optional[AutoModelForCausalLM]:
-        """Initialize the Moondream 2 model with error handling."""
         try:
             rospy.loginfo("\nInitializing Moondream 2 model...")
             
@@ -70,45 +72,91 @@ class GazeDetectionProcessor:
             rospy.logerr(f"\nError initializing model: {e}")
             traceback.print_exc()
             return None
-
-    def pointcloud_to_image(self, cloud_msg: PointCloud2) -> np.ndarray:
-        """Convert PointCloud2 message to 2D image"""
-        # Convert point cloud to numpy array
-        points = np.array(list(pc2.read_points(cloud_msg, skip_nans=True)))
         
-        if len(points) == 0:
+    def synced_callback(self, img_msg, pc_msg):
+        try:
+            # Convert image to OpenCV format
+            cv_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding='bgr8')
+
+            # Process image to get 2D pixel coordinates
+            (x1, y1), (x2, y2) = self.get_face_and_gaze_coordinates(cv_image)
+
+            # Get corresponding 3D points
+            point1 = self.get_point_at_pixel(pc_msg, x1, y1)
+            point2 = self.get_point_at_pixel(pc_msg, x2, y2)
+
+            rospy.loginfo(f"Face and Gaze points in image: ({x1}, {y1}), ({x2}, {y2})")
+            rospy.loginfo(f"Corresponding 3D points: {point1}, {point2}")
+
+            # Convert entire pointcloud to Open3D format
+            # open3d_cloud = self.convert_to_open3d(pc_msg)
+
+        except Exception as e:
+            rospy.logerr(f"Error in synced_callback: {e}")
+            traceback.print_exc()
+
+    def get_face_and_gaze_coordinates(self, image: np.ndarray) -> Tuple[Tuple[int, int], Tuple[int, int]]:
+        """
+        TODO
+        """
+        h, w, _ = image.shape
+        return (w // 2, h // 2), (50, 50)
+    
+    def get_point_at_pixel(self, cloud_msg: PointCloud2, x: int, y: int) -> Optional[np.ndarray]:
+        """
+        Retrieves the 3D point (x, y, z) corresponding to the image pixel (x, y)
+        from an organized PointCloud2 message.
+        """
+        width, height = cloud_msg.width, cloud_msg.height
+        if not (0 <= x < width and 0 <= y < height):
             return None
 
-        # Extract x, y, z coordinates
-        x = points[:, 0]
-        y = points[:, 1]
-        z = points[:, 2]
+        index = y * width + x
+        gen = pc2.read_points(cloud_msg, field_names=("x", "y", "z"), skip_nans=False)
+        for i, point in enumerate(gen):
+            if i == index:
+                return np.array(point) if not any(np.isnan(point)) else None
+        return None
 
-        # Project 3D points to 2D plane (simple orthographic projection)
-        height = int(abs(y.max() - y.min()) * 100)  # Scale factor of 100
-        width = int(abs(x.max() - x.min()) * 100)   # Scale factor of 100
+    def convert_to_open3d(rospc, remove_nans=False):
+        """ covert ros point cloud to open3d point cloud
+        Args: 
+            rospc (sensor.msg.PointCloud2): ros point cloud message
+            remove_nans (bool): if true, ignore the NaN points
+        Returns: 
+            o3dpc (open3d.geometry.PointCloud): open3d point cloud
+        """
+        field_names = [field.name for field in rospc.fields]
+        is_rgb = 'rgb' in field_names
+        cloud_array = ros_numpy.point_cloud2.pointcloud2_to_array(rospc).ravel()
+        if remove_nans:
+            mask = np.isfinite(cloud_array['x']) & np.isfinite(cloud_array['y']) & np.isfinite(cloud_array['z'])
+            cloud_array = cloud_array[mask]
+        if is_rgb:
+            cloud_npy = np.zeros(cloud_array.shape + (4,), dtype=float)
+        else: 
+            cloud_npy = np.zeros(cloud_array.shape + (3,), dtype=float)
         
-        # Ensure minimum dimensions
-        height = max(height, 480)
-        width = max(width, 640)
+        cloud_npy[...,0] = cloud_array['x']
+        cloud_npy[...,1] = cloud_array['y']
+        cloud_npy[...,2] = cloud_array['z']
+        o3dpc = open3d.geometry.PointCloud()
 
-        # Create depth image
-        image = np.zeros((height, width), dtype=np.uint8)
-        
-        # Normalize and scale depth values to 0-255
-        depth_normalized = ((z - z.min()) / (z.max() - z.min()) * 255).astype(np.uint8)
-        
-        # Map points to image pixels
-        x_img = ((x - x.min()) / (x.max() - x.min()) * (width - 1)).astype(int)
-        y_img = ((y - y.min()) / (y.max() - y.min()) * (height - 1)).astype(int)
-        
-        # Assign depth values to image
-        image[y_img, x_img] = depth_normalized
+        if len(np.shape(cloud_npy)) == 3:
+            cloud_npy = np.reshape(cloud_npy[:, :, :3], [-1, 3], 'F')
+        o3dpc.points = open3d.utility.Vector3dVector(cloud_npy[:, :3])
 
-        # Convert to 3-channel image
-        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-        
-        return image
+        if is_rgb:
+            rgb_npy = cloud_array['rgb']
+            rgb_npy.dtype = np.uint32
+            r = np.asarray((rgb_npy >> 16) & 255, dtype=np.uint8)
+            g = np.asarray((rgb_npy >> 8) & 255, dtype=np.uint8)
+            b = np.asarray(rgb_npy & 255, dtype=np.uint8)
+            rgb_npy = np.asarray([r, g, b])
+            rgb_npy = rgb_npy.astype(float)/255
+            rgb_npy = np.swapaxes(rgb_npy, 0, 1)
+            o3dpc.colors = open3d.utility.Vector3dVector(rgb_npy)
+        return o3dpc
 
     def process_frame(self, frame: np.ndarray) -> List[Dict]:
         """Process a single frame to detect faces and gaze coordinates"""
@@ -166,28 +214,6 @@ class GazeDetectionProcessor:
             rospy.logerr(f"Error processing frame: {e}")
             traceback.print_exc()
             return []
-
-    def pointcloud_callback(self, cloud_msg: PointCloud2):
-        """Process incoming point cloud data"""
-        try:
-            # Convert point cloud to image
-            frame = self.pointcloud_to_image(cloud_msg)
-            if frame is None:
-                rospy.logwarn("Failed to convert point cloud to image")
-                return
-
-            # Process the frame
-            results = self.process_frame(frame)
-            
-            # Log results
-            if results:
-                rospy.loginfo(f"Detected {len(results)} faces with gaze coordinates")
-                for i, result in enumerate(results):
-                    rospy.loginfo(f"Face {i+1}: {result}")
-            
-        except Exception as e:
-            rospy.logerr(f"Error in pointcloud callback: {e}")
-            traceback.print_exc()
 
 if __name__ == "__main__":
     try:

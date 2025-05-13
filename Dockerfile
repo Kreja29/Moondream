@@ -85,6 +85,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-noetic-dynamic-reconfigure \
     python3-netifaces \
     python3-opencv \
+    python3-rospy \
     && rm -rf /var/lib/apt/lists/*
 
 # Initialize rosdep
@@ -96,7 +97,7 @@ SHELL ["/bin/bash", "-c"]
 # Install Python 3.8 dependencies for ROS
 RUN . /opt/venv_py38/bin/activate && \
     pip install --upgrade pip setuptools wheel && \
-    pip install netifaces opencv-python && \
+    pip install netifaces opencv-python open3d && \
     deactivate
 
 # Install OpenCV runtime libs so the manylinux wheel works at runtime
@@ -122,7 +123,8 @@ RUN source /opt/venv_py39/bin/activate && \
         pyvips==2.2.3 \
         pyvips-binary==8.16.0 \
         huggingface-hub==0.24.0 \
-        gradio==4.38.1 && \
+        gradio==4.38.1 \
+        open3d && \
     pip install torch==2.1.2+cu118 --index-url https://download.pytorch.org/whl/cu118 && \
     pip install datasets==3.1.0 editdistance==0.8.1 rospkg catkin_pkg netifaces && \
     deactivate
