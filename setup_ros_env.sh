@@ -30,7 +30,7 @@ echo "Making Python scripts executable..."
 find /workspace/src -name "*.py" -exec chmod +x {} \;
 
 # Make sure scripts are executable
-chmod +x /workspace/src/gaze_detection/scripts/run_gaze_detection_wrapper.sh
+chmod +x /workspace/src/gaze_detection/scripts/run_gaze_detection_input_output_wrapper.sh
 chmod +x /workspace/src/gaze_detection/scripts/gaze_detection_input_output.py
 
 echo "ROS environment setup complete" 
