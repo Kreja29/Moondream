@@ -8,7 +8,7 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
     volumes:
-      - ./src:/workspace/src
+      - ./src/gaze_detection:/workspace/src/gaze_detection
       - ./check_setup.sh:/workspace/check_setup.sh
       - ./setup_ros_env.sh:/workspace/setup_ros_env.sh
     working_dir: /workspace
