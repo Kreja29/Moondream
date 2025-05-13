@@ -14,14 +14,11 @@ cd C:\Users\Marko\Desktop\TU\MOONDREAM\ros_moondream_workspace
 # Make a Terminal inside docker
 	docker exec -it moondream_container bash
 
-# Launching the testing node - take input images, process them and delete the input
-	roslaunch gaze_detection gaze_detection_input_output.launch
-
 # Stopping the container NVIDIA GPU
 	docker-compose -f docker-compose.nvidia.yml down
 
 # Stopping the container CPU
-	docker-compose -f docker-compose.nvidia.yml down
+	docker-compose -f docker-compose.cpu.yml down
 
 # Building the Package
 	cd /workspace
@@ -54,6 +51,8 @@ cd C:\Users\Marko\Desktop\TU\MOONDREAM\ros_moondream_workspace
 
 
 https://wiki.ros.org/rgbd_launch
+https://wiki.ros.org/freenect_launch
 https://wiki.ros.org/freenect_camera#Migration_guide
 roslaunch freenect_launch freenect-xyz.launch
 roslaunch freenect_launch freenect-registered-xyzrgb.launch
+roslaunch freenect_launch freenect.launch
