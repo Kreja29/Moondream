@@ -79,17 +79,49 @@ class GazeDetectionProcessor:
             cv_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding='bgr8')
 
             # Process image to get 2D pixel coordinates
-            (x1, y1), (x2, y2) = self.get_face_and_gaze_coordinates(cv_image)
+            face_coords, gaze_coords = self.get_face_and_gaze_coordinates(cv_image)
 
-            # Get corresponding 3D points
-            point1 = self.get_point_at_pixel(pc_msg, x1, y1)
-            point2 = self.get_point_at_pixel(pc_msg, x2, y2)
+            # Store 3D line pairs
+            line_points = []  # Open3D expects a flat list of points
+            line_indices = []  # (i, j) indices into line_points
+            point_pairs = []   # Optional: store (face_pt, gaze_pt) tuples
 
-            rospy.loginfo(f"Face and Gaze points in image: ({x1}, {y1}), ({x2}, {y2})")
-            rospy.loginfo(f"Corresponding 3D points: {point1}, {point2}")
+            for i, (face_coord, gaze_coord) in enumerate(zip(face_coords, gaze_coords)):
+                fx, fy = face_coord
+                face_pt = self.get_point_at_pixel(pc_msg, fx, fy)
 
-            # Convert entire pointcloud to Open3D format
-            # open3d_cloud = self.convert_to_open3d(pc_msg)
+                if face_pt is None:
+                    rospy.logwarn(f"Face point {i} is invalid.")
+                    continue
+
+                if gaze_coord is not None:
+                    gx, gy = gaze_coord
+                    gaze_pt = self.get_point_at_pixel(pc_msg, gx, gy)
+
+                    if gaze_pt is not None:
+                        start_idx = len(line_points)
+                        line_points.extend([face_pt, gaze_pt])
+                        line_indices.append([start_idx, start_idx + 1])
+                        point_pairs.append((face_pt, gaze_pt))
+
+                        rospy.loginfo(f"Line {i}: Face3D {face_pt} → Gaze3D {gaze_pt}")
+                    else:
+                        rospy.logwarn(f"Gaze point {i} is invalid.")
+                else:
+                    rospy.loginfo(f"No gaze for face {i}, skipping line.")
+
+
+            # Create Open3D line set
+            if line_points:
+                line_set = o3d.geometry.LineSet()
+                line_set.points = o3d.utility.Vector3dVector(line_points)
+                line_set.lines = o3d.utility.Vector2iVector(line_indices)
+                line_set.colors = o3d.utility.Vector3dVector([[1, 0, 0]] * len(line_indices))  # red lines
+
+                # Visualize or add to Open3D scene
+                o3d.visualization.draw_geometries([line_set])
+            else:
+                rospy.logwarn("No valid face-gaze line pairs to draw.")
 
         except Exception as e:
             rospy.logerr(f"Error in synced_callback: {e}")
