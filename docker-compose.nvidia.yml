@@ -5,12 +5,18 @@ services:
     image: ros-moondream-gaze:latest
     container_name: moondream_container
     runtime: nvidia  # Enables GPU support (requires NVIDIA Container Toolkit)
+    privileged: true # Enables access to USB
     environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11-NO-MITSHM=1
       - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
     volumes:
       - ./src/gaze_detection:/workspace/src/gaze_detection
       - ./check_setup.sh:/workspace/check_setup.sh
       - ./setup_ros_env.sh:/workspace/setup_ros_env.sh
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./rviz_views:/workspace/rviz_views
     working_dir: /workspace
     command: >
       bash -c "
