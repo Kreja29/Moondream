@@ -8,7 +8,7 @@ import threading
 
 class SnapshotPublisher:
     def __init__(self):
-        rospy.init_node('snapshot_service_node', anonymous=True)
+        rospy.init_node('snapshot_service_node')
 
         # Publishers
         self.image_pub = rospy.Publisher('/snapshot/image', Image, queue_size=1)

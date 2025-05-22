@@ -14,8 +14,8 @@ class GazeTo3DMapper:
         self.bridge = CvBridge()
 
         # Subscribers
-        image_sub = message_filters.Subscriber('/camera/rgb/image_raw', Image)
-        pc_sub = message_filters.Subscriber('/camera/depth_registered/points', PointCloud2)
+        image_sub = message_filters.Subscriber('/snapshot/image', Image)
+        pc_sub = message_filters.Subscriber('/snapshot/points', PointCloud2)
 
         ats = message_filters.ApproximateTimeSynchronizer([image_sub, pc_sub], queue_size=5, slop=0.1)
         ats.registerCallback(self.callback)
