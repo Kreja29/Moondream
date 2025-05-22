@@ -7,6 +7,9 @@ import ros_numpy
 import numpy as np
 import cv2
 import open3d
+import tf2_ros
+import tf2_geometry_msgs
+from geometry_msgs.msg import PointStamped
 from PIL import Image as PILImage
 from transformers import AutoModelForCausalLM
 import torch
@@ -34,13 +37,60 @@ class GazeDetectionProcessor:
             sys.exit(1)
 
         # Message filters for synchronized callback (Subscription)
-        self.rgb_sub = Subscriber("/camera/rgb/image_color", Image)
-        self.pc_sub = Subscriber("/camera/depth_registered/points", PointCloud2)
+        self.rgb_sub = Subscriber("/snapshot/image", Image)
+        self.pc_sub = Subscriber("/snapshot/points", PointCloud2)
 
         self.ts = ApproximateTimeSynchronizer([self.rgb_sub, self.pc_sub], queue_size=10, slop=0.1)
         self.ts.registerCallback(self.synced_callback)
+
+        self.rgb_to_pc_map = self.generate_rbg_to_pc_map(
+            fx_rgb=525.0, 
+            fy_rgb=525.0,
+            cx_rgb=319.5,
+            cy_rgb=239.5,
+            organized_pc=np.zeros((480, 640, 3)) 
+        )
         
         rospy.loginfo("GazeDetectionProcessor initialized")
+
+    def generate_rgb_to_pc_map(fx_rgb: float, fy_rgb: float, cx_rgb: float, cy_rgb: float, organized_pc) -> np.ndarray:
+
+        rgb_to_pc_map = np.zeros((640, 480, 2), dtype=np.float32)
+
+        for v in range(480):
+            for u in range(640):
+
+                point = organized_pc[v, u]
+                if not (np.isnan(point[0]) or np.isnan(point[1]) or np.isnan(point[2])):
+                    # Transform to RGB camera frame
+                    pt = PointStamped()
+                    pt.header.frame_id = "camera_depth_optical_frame"
+                    # pt.header.stamp = rospy.Time(0)
+                    pt.point.x = point[0]
+                    pt.point.y = point[1]
+                    pt.point.z = point[2]
+
+                    pt_transformed = tf2_geometry_msgs.do_transform_point(pt, tf2_ros.Buffer().lookup_transform("camera_depth_optical_frame", "camera_rgb_optical_frame", rospy.Time(0), rospy.Duration(1.0)))
+
+                    x_rgb, y_rgb, z_rgb = pt_transformed.point.x, pt_transformed.point.y, pt_transformed.point.z
+
+                    u_rgb = int((fx_rgb * x_rgb / z_rgb) + cx_rgb)
+                    v_rgb = int((fy_rgb * y_rgb / z_rgb) + cy_rgb)
+                    
+                    if 0 <= u_rgb < 640 and 0 <= v_rgb < 480:
+                        # Store the mapping
+                        rgb_to_pc_map[u_rgb, v_rgb] = (u, v)
+        return rgb_to_pc_map
+    
+    def get_corresponding_point(u_img, v_img, rgb_to_pc_map, organized_pc) -> Optional[np.ndarray]:
+        if (u_img, v_img) in rgb_to_pc_map:
+            u_pc, v_pc = rgb_to_pc_map[u_img, v_img]
+            point = organized_pc[v_pc, u_pc]
+            if not (np.isnan(point[0]) or np.isnan(point[1]) or np.isnan(point[2])):
+                return point
+
+
+
 
     def initialize_model(self) -> Optional[AutoModelForCausalLM]:
         try:
@@ -75,53 +125,21 @@ class GazeDetectionProcessor:
         
     def synced_callback(self, img_msg, pc_msg):
         try:
+
+            self.rgb_to_pc_map = self.generate_rbg_to_pc_map(
+            fx_rgb=525.0, 
+            fy_rgb=525.0,
+            cx_rgb=319.5,
+            cy_rgb=239.5,
+            organized_pc=ros_numpy.point_cloud2.pointcloud2_to_array(pc_msg).reshape((pc_msg.height, pc_msg.width, 3)) 
+            )
+            
             # Convert image to OpenCV format
             cv_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding='bgr8')
 
             # Process image to get 2D pixel coordinates
             face_coords, gaze_coords = self.get_face_and_gaze_coordinates(cv_image)
 
-            # Store 3D line pairs
-            line_points = []  # Open3D expects a flat list of points
-            line_indices = []  # (i, j) indices into line_points
-            point_pairs = []   # Optional: store (face_pt, gaze_pt) tuples
-
-            for i, (face_coord, gaze_coord) in enumerate(zip(face_coords, gaze_coords)):
-                fx, fy = face_coord
-                face_pt = self.get_point_at_pixel(pc_msg, fx, fy)
-
-                if face_pt is None:
-                    rospy.logwarn(f"Face point {i} is invalid.")
-                    continue
-
-                if gaze_coord is not None:
-                    gx, gy = gaze_coord
-                    gaze_pt = self.get_point_at_pixel(pc_msg, gx, gy)
-
-                    if gaze_pt is not None:
-                        start_idx = len(line_points)
-                        line_points.extend([face_pt, gaze_pt])
-                        line_indices.append([start_idx, start_idx + 1])
-                        point_pairs.append((face_pt, gaze_pt))
-
-                        rospy.loginfo(f"Line {i}: Face3D {face_pt} → Gaze3D {gaze_pt}")
-                    else:
-                        rospy.logwarn(f"Gaze point {i} is invalid.")
-                else:
-                    rospy.loginfo(f"No gaze for face {i}, skipping line.")
-
-
-            # Create Open3D line set
-            if line_points:
-                line_set = o3d.geometry.LineSet()
-                line_set.points = o3d.utility.Vector3dVector(line_points)
-                line_set.lines = o3d.utility.Vector2iVector(line_indices)
-                line_set.colors = o3d.utility.Vector3dVector([[1, 0, 0]] * len(line_indices))  # red lines
-
-                # Visualize or add to Open3D scene
-                o3d.visualization.draw_geometries([line_set])
-            else:
-                rospy.logwarn("No valid face-gaze line pairs to draw.")
 
         except Exception as e:
             rospy.logerr(f"Error in synced_callback: {e}")
@@ -134,61 +152,6 @@ class GazeDetectionProcessor:
         h, w, _ = image.shape
         return (w // 2, h // 2), (50, 50)
     
-    def get_point_at_pixel(self, cloud_msg: PointCloud2, x: int, y: int) -> Optional[np.ndarray]:
-        """
-        Retrieves the 3D point (x, y, z) corresponding to the image pixel (x, y)
-        from an organized PointCloud2 message.
-        """
-        width, height = cloud_msg.width, cloud_msg.height
-        if not (0 <= x < width and 0 <= y < height):
-            return None
-
-        index = y * width + x
-        gen = pc2.read_points(cloud_msg, field_names=("x", "y", "z"), skip_nans=False)
-        for i, point in enumerate(gen):
-            if i == index:
-                return np.array(point) if not any(np.isnan(point)) else None
-        return None
-
-    def convert_to_open3d(rospc, remove_nans=False):
-        """ covert ros point cloud to open3d point cloud
-        Args: 
-            rospc (sensor.msg.PointCloud2): ros point cloud message
-            remove_nans (bool): if true, ignore the NaN points
-        Returns: 
-            o3dpc (open3d.geometry.PointCloud): open3d point cloud
-        """
-        field_names = [field.name for field in rospc.fields]
-        is_rgb = 'rgb' in field_names
-        cloud_array = ros_numpy.point_cloud2.pointcloud2_to_array(rospc).ravel()
-        if remove_nans:
-            mask = np.isfinite(cloud_array['x']) & np.isfinite(cloud_array['y']) & np.isfinite(cloud_array['z'])
-            cloud_array = cloud_array[mask]
-        if is_rgb:
-            cloud_npy = np.zeros(cloud_array.shape + (4,), dtype=float)
-        else: 
-            cloud_npy = np.zeros(cloud_array.shape + (3,), dtype=float)
-        
-        cloud_npy[...,0] = cloud_array['x']
-        cloud_npy[...,1] = cloud_array['y']
-        cloud_npy[...,2] = cloud_array['z']
-        o3dpc = open3d.geometry.PointCloud()
-
-        if len(np.shape(cloud_npy)) == 3:
-            cloud_npy = np.reshape(cloud_npy[:, :, :3], [-1, 3], 'F')
-        o3dpc.points = open3d.utility.Vector3dVector(cloud_npy[:, :3])
-
-        if is_rgb:
-            rgb_npy = cloud_array['rgb']
-            rgb_npy.dtype = np.uint32
-            r = np.asarray((rgb_npy >> 16) & 255, dtype=np.uint8)
-            g = np.asarray((rgb_npy >> 8) & 255, dtype=np.uint8)
-            b = np.asarray(rgb_npy & 255, dtype=np.uint8)
-            rgb_npy = np.asarray([r, g, b])
-            rgb_npy = rgb_npy.astype(float)/255
-            rgb_npy = np.swapaxes(rgb_npy, 0, 1)
-            o3dpc.colors = open3d.utility.Vector3dVector(rgb_npy)
-        return o3dpc
 
     def process_frame(self, frame: np.ndarray) -> List[Dict]:
         """Process a single frame to detect faces and gaze coordinates"""

@@ -28,7 +28,7 @@ class GazeTo3DMapper:
         cv_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding='bgr8')
         height, width, _ = cv_image.shape
 
-        # Dummy AI model output (replace with your model)
+        # Temp model output
         face_pixels = [(200, 300), (150, 150)]
         gaze_pixels = [(250, 350), (100, 50)]
 
