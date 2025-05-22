@@ -106,6 +106,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1-mesa-glx \
     && rm -rf /var/lib/apt/lists/*
 
+# Install PyKDL dependency
+RUN apt-get update && \
+    apt-get install -y python3-pykdl && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # Install Python 3.9 dependencies
 RUN source /opt/venv_py39/bin/activate && \
     pip install --upgrade pip setuptools wheel && \
