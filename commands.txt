@@ -1,0 +1,72 @@
+cd C:\Users\Marko\Desktop\TU\MOONDREAM\ros_moondream_workspace
+
+# Build the Docker image
+	docker build -t ros-moondream-gaze:latest . 
+
+# Starting the container For NVIDIA GPU
+	cd ros_moondream_workspace
+	docker-compose -f docker-compose.nvidia.yml up
+
+# Starting the container For CPU-only
+	cd ros_moondream_workspace
+	docker-compose -f docker-compose.cpu.yml up
+
+# Make a Terminal inside docker
+	docker exec -it moondream_container bash
+
+# Stopping the container NVIDIA GPU
+	docker-compose -f docker-compose.nvidia.yml down
+
+# Stopping the container CPU
+	docker-compose -f docker-compose.cpu.yml down
+
+# Building the Package
+	cd /workspace
+	with_py38 catkin build gaze_detection
+	source devel/setup.bash
+
+# Standard ROS launch will automatically use the wrapper to run with Python 3.9
+	roslaunch gaze_detection gaze_detection_input_output.launch
+
+# Use Python 3.8
+	py38 some_script.py
+# or
+	with_py38 python3 some_script.py
+
+# Use Python 3.9
+	py39 some_script.py
+# or
+	with_py39 python3 some_script.py
+
+
+# Master node
+	roscore
+	
+# Gaze detection input output node
+	/opt/venv_py39/bin/python3 /workspace/src/gaze_detection/scripts/gaze_detection_input_output.py
+	
+# Gaze detection video processor node
+	/opt/venv_py39/bin/python3 /workspace/src/gaze_detection/scripts/gaze_detection_video_processing.py
+
+
+
+# Snapshot trigger node
+	/opt/venv_py39/bin/python3 /workspace/src/gaze_detection/scripts/snapshot_service_node.py
+rosservice call /snapshot_trigger
+
+
+https://wiki.ros.org/image_pipeline/CameraInfo
+https://wiki.ros.org/rgbd_launch
+https://wiki.ros.org/freenect_launch
+https://wiki.ros.org/freenect_camera#Migration_guide
+https://wiki.ros.org/pcl_ros
+https://docs.ros.org/en/kinetic/api/sensor_msgs/html/namespacesensor__msgs.html
+https://wiki.ros.org/sensor_msgs
+
+roslaunch freenect_launch freenect-registered-xyzrgb.launch
+rviz (xhost +local:root)
+
+roslaunch freenect_launch freenect-xyz.launch
+roslaunch freenect_launch freenect.launch
+
+rospy	open3d
