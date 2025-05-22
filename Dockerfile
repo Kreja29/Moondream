@@ -147,9 +147,11 @@ RUN mkdir -p external_repos && \
 WORKDIR /workspace
 RUN mkdir -p src logs
 
-# Clone the freenect ROS packages into the workspace
+# Clone the freenect ROS packages and rosnumpy into the workspace
 WORKDIR /workspace/src
 RUN git clone https://github.com/Kreja29/freenect_stack.git
+RUN git clone https://github.com/eric-wieser/ros_numpy.git
+
 
 
 # First catkin config and build

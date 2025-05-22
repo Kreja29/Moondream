@@ -42,16 +42,64 @@ class GazeDetectionProcessor:
 
         self.ts = ApproximateTimeSynchronizer([self.rgb_sub, self.pc_sub], queue_size=10, slop=0.1)
         self.ts.registerCallback(self.synced_callback)
+        
+        rospy.loginfo("GazeDetectionProcessor initialized")
 
-        self.rgb_to_pc_map = self.generate_rbg_to_pc_map(
+    def initialize_model(self) -> Optional[AutoModelForCausalLM]:
+        try:
+            rospy.loginfo("\nInitializing Moondream 2 model...")
+            
+            if torch.cuda.is_available():
+                rospy.loginfo(f"GPU detected: {torch.cuda.get_device_name(0)}")
+                device = "cuda"
+            else:
+                rospy.loginfo("No GPU detected, using CPU")
+                device = "cpu"
+
+            model = AutoModelForCausalLM.from_pretrained(
+                self.model_id,
+                revision=self.model_revision,
+                trust_remote_code=True,
+                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+                low_cpu_mem_usage=True,
+                device_map={"": device} if device == "cuda" else None,
+            )
+
+            if device == "cpu":
+                model = model.to(device)
+            model.eval()
+
+            rospy.loginfo("✓ Model initialized successfully")
+            return model
+        except Exception as e:
+            rospy.logerr(f"\nError initializing model: {e}")
+            traceback.print_exc()
+            return None
+        
+    def synced_callback(self, img_msg, pc_msg):
+        try:
+            self.rgb_to_pc_map = self.generate_rbg_to_pc_map(
             fx_rgb=525.0, 
             fy_rgb=525.0,
             cx_rgb=319.5,
             cy_rgb=239.5,
-            organized_pc=np.zeros((480, 640, 3)) 
-        )
-        
-        rospy.loginfo("GazeDetectionProcessor initialized")
+            organized_pc=ros_numpy.point_cloud2.pointcloud2_to_array(pc_msg).reshape((pc_msg.height, pc_msg.width, 3)) 
+            )
+            
+            # Convert image to OpenCV format
+            cv_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding='bgr8')
+
+            # Process image to get 2D pixel coordinates
+            gaze_results = self.process_frame(cv_image)
+
+            # Print results
+            for result in gaze_results:
+                rospy.loginfo(f"Face coordinates: {result['face_coords']}")
+                rospy.loginfo(f"Gaze coordinates: {result['gaze_coords']}")
+
+        except Exception as e:
+            rospy.logerr(f"Error in synced_callback: {e}")
+            traceback.print_exc()
 
     def generate_rgb_to_pc_map(fx_rgb: float, fy_rgb: float, cx_rgb: float, cy_rgb: float, organized_pc) -> np.ndarray:
 
@@ -89,62 +137,6 @@ class GazeDetectionProcessor:
             if not (np.isnan(point[0]) or np.isnan(point[1]) or np.isnan(point[2])):
                 return point
 
-
-
-
-    def initialize_model(self) -> Optional[AutoModelForCausalLM]:
-        try:
-            rospy.loginfo("\nInitializing Moondream 2 model...")
-            
-            if torch.cuda.is_available():
-                rospy.loginfo(f"GPU detected: {torch.cuda.get_device_name(0)}")
-                device = "cuda"
-            else:
-                rospy.loginfo("No GPU detected, using CPU")
-                device = "cpu"
-
-            model = AutoModelForCausalLM.from_pretrained(
-                self.model_id,
-                revision=self.model_revision,
-                trust_remote_code=True,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-                low_cpu_mem_usage=True,
-                device_map={"": device} if device == "cuda" else None,
-            )
-
-            if device == "cpu":
-                model = model.to(device)
-            model.eval()
-
-            rospy.loginfo("✓ Model initialized successfully")
-            return model
-        except Exception as e:
-            rospy.logerr(f"\nError initializing model: {e}")
-            traceback.print_exc()
-            return None
-        
-    def synced_callback(self, img_msg, pc_msg):
-        try:
-
-            self.rgb_to_pc_map = self.generate_rbg_to_pc_map(
-            fx_rgb=525.0, 
-            fy_rgb=525.0,
-            cx_rgb=319.5,
-            cy_rgb=239.5,
-            organized_pc=ros_numpy.point_cloud2.pointcloud2_to_array(pc_msg).reshape((pc_msg.height, pc_msg.width, 3)) 
-            )
-            
-            # Convert image to OpenCV format
-            cv_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding='bgr8')
-
-            # Process image to get 2D pixel coordinates
-            face_coords, gaze_coords = self.get_face_and_gaze_coordinates(cv_image)
-
-
-        except Exception as e:
-            rospy.logerr(f"Error in synced_callback: {e}")
-            traceback.print_exc()
-
     def get_face_and_gaze_coordinates(self, image: np.ndarray) -> Tuple[Tuple[int, int], Tuple[int, int]]:
         """
         TODO
@@ -156,6 +148,8 @@ class GazeDetectionProcessor:
     def process_frame(self, frame: np.ndarray) -> List[Dict]:
         """Process a single frame to detect faces and gaze coordinates"""
         try:
+            image_height, image_width = frame.shape[:2]
+
             # Convert frame for model
             pil_image = PILImage.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
@@ -191,12 +185,12 @@ class GazeDetectionProcessor:
                     if gaze and isinstance(gaze, dict) and "x" in gaze and "y" in gaze:
                         results.append({
                             'face_coords': {
-                                'x': face_center[0],
-                                'y': face_center[1]
+                                'x': int(face_center[0] * image_width),
+                                'y': int(face_center[1] * image_height)
                             },
                             'gaze_coords': {
-                                'x': float(gaze["x"]),
-                                'y': float(gaze["y"])
+                                'x': int(float(gaze["x"]) * image_width),
+                                'y': int(float(gaze["y"]) * image_height)
                             }
                         })
                 except Exception as e:
