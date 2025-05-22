@@ -4,6 +4,8 @@ project(gaze_detection)
 find_package(catkin REQUIRED COMPONENTS
   rospy
   std_msgs
+  std_srvs
+  message_filters
   sensor_msgs
   cv_bridge
 )
