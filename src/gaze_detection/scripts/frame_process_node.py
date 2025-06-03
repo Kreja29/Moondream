@@ -8,8 +8,8 @@ import numpy as np
 import cv2
 import open3d
 import tf2_ros
-import tf2_geometry_msgs
-from geometry_msgs.msg import PointStamped
+from geometry_msgs.msg import PointStamped, TransformStamped
+import tf.transformations as tft
 from PIL import Image as PILImage
 from transformers import AutoModelForCausalLM
 import torch
@@ -92,6 +92,8 @@ class GazeDetectionProcessor:
             # Process image to get 2D pixel coordinates
             gaze_results = self.process_frame(cv_image)
 
+            rospy.loginfo("Face coordinates and Gaze coordinates detected")
+
             # Print results
             for result in gaze_results:
                 rospy.loginfo(f"Face coordinates: {result['face_coords']}")
@@ -118,9 +120,22 @@ class GazeDetectionProcessor:
                     pt.point.y = point[1]
                     pt.point.z = point[2]
 
-                    pt_transformed = tf2_geometry_msgs.do_transform_point(pt, tf2_ros.Buffer().lookup_transform("camera_depth_optical_frame", "camera_rgb_optical_frame", rospy.Time(0), rospy.Duration(1.0)))
+                    #pt_transformed = tf2_geometry_msgs.do_transform_point(pt, tf2_ros.Buffer().lookup_transform("camera_depth_optical_frame", "camera_rgb_optical_frame", rospy.Time(0), rospy.Duration(1.0)))
 
-                    x_rgb, y_rgb, z_rgb = pt_transformed.point.x, pt_transformed.point.y, pt_transformed.point.z
+                    translation = [-0.025, 0.0, 0.0]
+                    rotation = [0.0, 0.0, 0.0, 1.0]
+
+                    # Build the transformation matrix
+                    transform_matrix = tft.concatenate_matrices(
+                        tft.translation_matrix(translation),
+                        tft.quaternion_matrix(rotation)
+                    )
+                    # Apply the transformation
+                    point_np = np.array([pt.point.x, pt.point.y, pt.point.z, 1.0])
+                    transformed_point = np.dot(transform_matrix, point_np)
+
+
+                    x_rgb, y_rgb, z_rgb = transformed_point[0], transformed_point[1], transformed_point[2]
 
                     u_rgb = int((fx_rgb * x_rgb / z_rgb) + cx_rgb)
                     v_rgb = int((fy_rgb * y_rgb / z_rgb) + cy_rgb)

@@ -65,8 +65,9 @@ RUN python3.8 -m venv /opt/venv_py38 && \
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.8 1
 
 # Install ROS Noetic (which will use Python 3.8)
-RUN curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | apt-key add -
-RUN echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list
+
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-noetic-desktop-full \
@@ -133,7 +134,7 @@ RUN source /opt/venv_py39/bin/activate && \
     pip install torch==2.1.2+cu118 --index-url https://download.pytorch.org/whl/cu118 && \
     pip install datasets==3.1.0 editdistance==0.8.1 rospkg catkin_pkg netifaces && \
     deactivate
-
+   
 RUN apt-get update && \
     apt-get install -y usbutils && \
     rm -rf /var/lib/apt/lists/*
