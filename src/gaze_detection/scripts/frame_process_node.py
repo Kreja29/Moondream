@@ -84,15 +84,15 @@ class GazeDetectionProcessor:
         marker = Marker()
         marker.header.frame_id = "camera_depth_optical_frame"
         marker.header.stamp = rospy.Time.now()
-        marker.ns = "gaze_arrow"
+        #marker.ns = "gaze_arrow"
         marker.id = marker_id
         marker.type = Marker.ARROW
         marker.action = Marker.ADD
 
         # Set the arrow's start and end points
         marker.points = [
-            PointStamped(point=geometry_msgs.msg.Point(*start_point)).point,
-            PointStamped(point=geometry_msgs.msg.Point(*end_point)).point,
+            PointStamped(point=Point(*start_point)).point,
+            PointStamped(point=Point(*end_point)).point,
         ]
 
         # Arrow scale: shaft diameter, head diameter, head length
@@ -105,6 +105,8 @@ class GazeDetectionProcessor:
         marker.color.g = 0.0
         marker.color.b = 0.0
         marker.color.a = 1.0
+
+        print(f"Published marker {marker}")
 
         self.marker_pub.publish(marker)
 
@@ -150,6 +152,12 @@ class GazeDetectionProcessor:
                 point_3d_g = self.get_corresponding_point(u_g, v_g)
                 if point_3d_g:
                     rospy.loginfo(f"Corresponding 3D point for gaze: ({point_3d_g.x}, {point_3d_g.y}, {point_3d_g.z})")
+
+            # Publish arrow marker from 3D point to gaze coordinates
+            if point_3d_g and point_3d_f:
+                start_point = (point_3d_f.x, point_3d_f.y, point_3d_f.z)
+                end_point = (point_3d_g.x, point_3d_g.y, point_3d_g.z)
+                self.publish_arrow_marker(start_point, end_point, marker_id=self.processed_count)
 
 
         except Exception as e:
