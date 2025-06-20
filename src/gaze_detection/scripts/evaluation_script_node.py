@@ -79,8 +79,19 @@ class GazeDetectionEvaluator:
             [-0.16872942, -0.24101171,  0.43772051],
             [-0.36351209, -0.23879948,  0.45211431],
         ])
-        self.R_pos = np.eye(3)  
-        self.T_pos = np.zeros((3, 1)) 
+        # Rotation matrix
+        self.R_pos = np.array([
+            [1.0,  0.0,  0.0],
+            [0.0, -1.0,  0.0],
+            [0.0,  0.0, -1.0]
+        ])
+
+        # Translation vector
+        self.T_pos = np.array([
+            [0.0],
+            [0.0],
+            [1.0]
+        ])
         self.K = np.eye(3) 
 
         # Initialize model
