@@ -267,7 +267,7 @@ class GazeDetectionEvaluator:
             return None
         if not faces:
             return None
-        face = max(faces, key=lambda f: (f["x_max"]-f["x_min"]) * (f["y_max"]-f["y_min"]))
+        face = faces[0]  # Should only be one face
         face_center = (
             float(face["x_min"] + face["x_max"]) / 2,
             float(face["y_min"] + face["y_max"]) / 2,
