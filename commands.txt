@@ -64,3 +64,7 @@ roslaunch freenect_launch freenect-xyz.launch
 roslaunch freenect_launch freenect.launch
 
 rospy	open3d
+
+
+rosrun tf tf_echo camera_depth_optical_frame camera_rgb_optical_frame
+
