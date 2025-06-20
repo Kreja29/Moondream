@@ -81,3 +81,6 @@ rospy	open3d
 
 rosrun tf tf_echo camera_depth_optical_frame camera_rgb_optical_frame
 
+/opt/venv_py39/bin/python3  -c "import numpy as np; print(np.load('marker_position_kinect.npy'))"
+
+
