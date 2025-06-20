@@ -1,0 +1,11 @@
+root@2662affd5fbf:/workspace# /opt/venv_py39/bin/python3 /workspace/src/gaze_detection/scripts/frame_process_node.py
+Traceback (most recent call last):
+  File "/workspace/src/gaze_detection/scripts/frame_process_node.py", line 11, in <module>
+    import tf2_geometry_msgs
+  File "/opt/ros/noetic/lib/python3/dist-packages/tf2_geometry_msgs/__init__.py", line 1, in <module>
+    from .tf2_geometry_msgs import *
+  File "/opt/ros/noetic/lib/python3/dist-packages/tf2_geometry_msgs/tf2_geometry_msgs.py", line 31, in <module>
+    import PyKDL
+ModuleNotFoundError: No module named 'PyKDL'
+
+

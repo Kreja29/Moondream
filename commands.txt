@@ -47,6 +47,14 @@ cd C:\Users\Marko\Desktop\TU\MOONDREAM\ros_moondream_workspace
 	
 # Gaze detection video processor node
 	/opt/venv_py39/bin/python3 /workspace/src/gaze_detection/scripts/gaze_detection_video_processing.py
+		
+# Frame process node
+	/opt/venv_py39/bin/python3 /workspace/src/gaze_detection/scripts/frame_process_node.py
+
+# Snapshot trigger node
+	/opt/venv_py39/bin/python3 /workspace/src/gaze_detection/scripts/snapshot_service_node.py
+	
+rosservice call /snapshot_trigger
 
 
 https://wiki.ros.org/image_pipeline/CameraInfo
@@ -58,7 +66,7 @@ https://docs.ros.org/en/kinetic/api/sensor_msgs/html/namespacesensor__msgs.html
 https://wiki.ros.org/sensor_msgs
 
 roslaunch freenect_launch freenect-registered-xyzrgb.launch
-
+rviz (xhost +local:root)
 
 roslaunch freenect_launch freenect-xyz.launch
 roslaunch freenect_launch freenect.launch
