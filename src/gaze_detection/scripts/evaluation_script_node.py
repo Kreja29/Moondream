@@ -61,6 +61,28 @@ class GazeDetectionEvaluator:
         self.processing_times = []
         self.processed_count = 0
 
+        # Marker positions in Kinect camera coordinates
+        self.marker_positions_kinect = np.array([
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+        ])
+        self.R_pos = np.eye(3)  
+        self.T_pos = np.zeros((3, 1)) 
+        self.K = np.eye(3) 
+
         # Initialize model
         self.model = self.initialize_model()
         if self.model is None:
@@ -124,7 +146,6 @@ class GazeDetectionEvaluator:
         mouse_events = self.dataset_helper.load_mouse_events(user_id, session)
         gaze_labels = self.dataset_helper.load_gaze_labels(user_id, session)
         speech_labels = self.dataset_helper.load_speech_labels(user_id, session)
-        # Log loaded data shapes
         rospy.loginfo(f"    RGB file: {rgb_file}")
         rospy.loginfo(f"    Depth file: {depth_file}")
         if mouse_events is not None:
@@ -133,7 +154,61 @@ class GazeDetectionEvaluator:
             rospy.loginfo(f"    Gaze labels: {gaze_labels.shape}")
         if speech_labels is not None:
             rospy.loginfo(f"    Speech labels: {len(speech_labels)} lines")
-        # TODO: Add MT-specific evaluation logic here
+        if rgb_file is None or not os.path.exists(rgb_file):
+            rospy.logwarn(f"    RGB video file not found: {rgb_file}")
+            return
+        if mouse_events is None or gaze_labels is None:
+            rospy.logwarn(f"    Mouse events or gaze labels not found for {user_id} {session}")
+            return
+        cap = cv2.VideoCapture(rgb_file)
+        errors = []
+        for idx, event in enumerate(mouse_events):
+            if event == -1:
+                continue
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if not ret:
+                rospy.logwarn(f"    Could not read frame {idx} from {rgb_file}")
+                continue
+            # Process frame to get gaze (2D, normalized 0-1)
+            gaze_2d = self.get_gaze_from_frame(frame)
+            if gaze_2d is None:
+                rospy.logwarn(f"    No gaze detected in frame {idx}")
+                continue
+            # Convert normalized gaze to pixel coordinates
+            h, w = frame.shape[:2]
+            u = int(gaze_2d[0] * w)
+            v = int(gaze_2d[1] * h)
+            # Get depth at (u, v) from depth file (if available)
+            depth = self.get_depth_at_pixel(depth_file, idx, u, v)
+            if depth is None:
+                rospy.logwarn(f"    No depth for frame {idx}, pixel ({u},{v})")
+                continue
+            # Project to 3D (kinect camera coordinates)
+            x = (u - self.K[0, 2]) * depth / self.K[0, 0]
+            y = (v - self.K[1, 2]) * depth / self.K[1, 1]
+            z = depth
+            pred_3d = np.array([x, y, z])
+            # Get marker index from gaze_labels
+            marker_idx = gaze_labels[idx]
+            if marker_idx < 0 or marker_idx >= self.marker_positions_kinect.shape[0]:
+                rospy.logwarn(f"    Invalid marker index {marker_idx} at frame {idx}")
+                continue
+            # Marker position in Kinect camera coordinates
+            marker_kinect = self.marker_positions_kinect[marker_idx]
+            # Optionally, convert marker_kinect to image coordinates:
+            # pt_img = self.R_pos @ marker_kinect.reshape(3, 1) + self.T_pos
+            # pt_img = pt_img.flatten()
+            # Compute error
+            error = np.linalg.norm(pred_3d - marker_kinect)
+            errors.append(error)
+            rospy.loginfo(f"    Frame {idx}: error={error:.3f}m, marker={marker_idx}")
+        cap.release()
+        if errors:
+            mean_error = np.mean(errors)
+            rospy.loginfo(f"    MT session mean error: {mean_error:.3f}m over {len(errors)} frames")
+        else:
+            rospy.loginfo(f"    No valid frames processed for MT session")
 
     def process_om_session(self, user_id: str, session: str):
         rgb_file, depth_file = self.dataset_helper.get_video_files(user_id, session)
@@ -173,6 +248,47 @@ class GazeDetectionEvaluator:
             import traceback
             traceback.print_exc()
             return None
+
+    def load_kinect_intrinsics(self):
+        import scipy.io
+        calib_path = os.path.join(self.dataset_dir, 'camera_calibration', 'kinect2.mat')
+        calib = scipy.io.loadmat(calib_path)
+        return {'rgb_intrinsics': calib['rK'][0][0]}
+
+    def get_gaze_from_frame(self, frame: np.ndarray) -> Optional[Tuple[float, float]]:
+        from PIL import Image as PILImage
+        pil_image = PILImage.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        detection_result = self.model.detect(pil_image, "face")
+        if isinstance(detection_result, dict) and "objects" in detection_result:
+            faces = detection_result["objects"]
+        elif isinstance(detection_result, list):
+            faces = detection_result
+        else:
+            return None
+        if not faces:
+            return None
+        face = max(faces, key=lambda f: (f["x_max"]-f["x_min"]) * (f["y_max"]-f["y_min"]))
+        face_center = (
+            float(face["x_min"] + face["x_max"]) / 2,
+            float(face["y_min"] + face["y_max"]) / 2,
+        )
+        try:
+            gaze_result = self.model.detect_gaze(pil_image, face_center)
+            if isinstance(gaze_result, dict) and "gaze" in gaze_result:
+                gaze = gaze_result["gaze"]
+            else:
+                gaze = gaze_result
+            if gaze and isinstance(gaze, dict) and "x" in gaze and "y" in gaze:
+                return float(gaze["x"]), float(gaze["y"])
+        except Exception as e:
+            rospy.logwarn(f"Error detecting gaze: {e}")
+        return None
+
+    def get_depth_at_pixel(self, depth_file: Optional[str], frame_idx: int, u: int, v: int) -> Optional[float]:
+        # Placeholder: implement actual depth extraction from depth video or file
+        # For now, return a fixed value (e.g., 1.0 meter)
+        # TODO: Implement actual depth extraction
+        return 1.0
 
 if __name__ == "__main__":
     try:
