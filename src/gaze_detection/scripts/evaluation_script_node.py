@@ -220,7 +220,7 @@ class GazeDetectionEvaluator:
             # Convert marker to Kinect camera coordinate system
             marker_cam = np.linalg.inv(self.R_pos) @ (marker_img - self.T_pos)
             marker_cam = marker_cam.flatten()
-            
+
             # Compute error in camera coordinate system
             error = np.linalg.norm(pred_3d - marker_cam)
             errors.append(error)
@@ -270,12 +270,6 @@ class GazeDetectionEvaluator:
             import traceback
             traceback.print_exc()
             return None
-
-    def load_kinect_intrinsics(self):
-        import scipy.io
-        calib_path = os.path.join(self.dataset_dir, 'camera_calibration', 'kinect2.mat')
-        calib = scipy.io.loadmat(calib_path)
-        return {'rgb_intrinsics': calib['rK'][0][0]}
 
     def get_gaze_from_frame(self, frame: np.ndarray) -> Optional[Tuple[float, float]]:
         from PIL import Image as PILImage
