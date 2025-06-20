@@ -213,10 +213,16 @@ class GazeDetectionEvaluator:
             if marker_idx < 0 or marker_idx >= self.marker_positions_kinect.shape[0]:
                 rospy.logwarn(f"    Invalid marker index {marker_idx} at frame {idx}")
                 continue
-            # Marker position in Kinect camera coordinates
-            marker_kinect = self.marker_positions_kinect[marker_idx]
-            # Compute error
-            error = np.linalg.norm(pred_3d - marker_kinect)
+
+            # Marker position in Kinect image coordinates
+            marker_img = self.marker_positions_kinect[marker_idx].reshape(3, 1)
+
+            # Convert marker to Kinect camera coordinate system
+            marker_cam = np.linalg.inv(self.R_pos) @ (marker_img - self.T_pos)
+            marker_cam = marker_cam.flatten()
+            
+            # Compute error in camera coordinate system
+            error = np.linalg.norm(pred_3d - marker_cam)
             errors.append(error)
             rospy.loginfo(f"    Frame {idx}: error={error:.3f}m, marker={marker_idx}")
         cap.release()
