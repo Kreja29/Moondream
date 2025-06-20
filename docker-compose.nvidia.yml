@@ -17,6 +17,7 @@ services:
       - ./setup_ros_env.sh:/workspace/setup_ros_env.sh
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ./rviz_views:/workspace/rviz_views
+      - ./dataset:/workspace/dataset
     working_dir: /workspace
     command: >
       bash -c "

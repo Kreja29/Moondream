@@ -1,3 +1,4 @@
 /src/gaze_detection/input/*
 /src/gaze_detection/output/*
 /src/freenect_stack/*
+/dataset*
