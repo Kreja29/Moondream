@@ -61,9 +61,8 @@ class GazeDetectionEvaluator:
         self.processing_times = []
         self.processed_count = 0
 
-        # === PLACEHOLDER VALUES: Fill in with your actual marker positions and transforms ===
+        # Marker positions in Kinect camera coordinates
         self.marker_positions_kinect = np.array([
-            # TODO: Fill in your 15x3 marker positions in Kinect camera coordinates
             [0, 0, 0],
             [0, 0, 0],
             [0, 0, 0],
@@ -80,10 +79,9 @@ class GazeDetectionEvaluator:
             [0, 0, 0],
             [0, 0, 0],
         ])
-        self.R_pos = np.eye(3)  # TODO: Replace with your 3x3 rotation matrix
-        self.T_pos = np.zeros((3, 1))  # TODO: Replace with your 3x1 translation vector
-        self.K = np.eye(3)  # TODO: Replace with your 3x3 camera intrinsics matrix
-        # === END PLACEHOLDER VALUES ===
+        self.R_pos = np.eye(3)  
+        self.T_pos = np.zeros((3, 1)) 
+        self.K = np.eye(3) 
 
         # Initialize model
         self.model = self.initialize_model()
