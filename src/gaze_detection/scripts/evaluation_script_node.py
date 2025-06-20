@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+from pathlib import Path
 import sys
 import rospy
 import cv2
@@ -17,10 +18,11 @@ class DatasetHelper:
         self.dataset_path = dataset_path
 
     def get_id_list(self) -> List[str]:
-        return [d for d in os.listdir(self.dataset_path) if d.startswith('ID_') and os.path.isdir(os.path.join(self.dataset_path, d))]
+        return [d for d in os.listdir(self.dataset_path) if d.startswith('ManiGaze_ID_') and os.path.isdir(os.path.join(self.dataset_path, d))]
 
     def get_session_path(self, user_id: str, session: str) -> str:
-        return os.path.join(self.dataset_path, user_id, session)
+        id_part = user_id.split('_', 1)[1]
+        return os.path.join(self.dataset_path, user_id, 'ManiGaze', id_part, session)
 
     def get_video_files(self, user_id: str, session: str, camera: str = 'kinect2') -> Tuple[Optional[str], Optional[str]]:
         session_path = self.get_session_path(user_id, session)
@@ -51,8 +53,8 @@ class DatasetHelper:
 class GazeDetectionEvaluator:
     def __init__(self):
         # Parameters for dataset and evaluation
-        self.dataset_dir = rospy.get_param('~dataset_dir', '/path/to/dataset')
-        self.results_dir = rospy.get_param('~results_dir', '/path/to/results')
+        self.dataset_dir = rospy.get_param('~dataset_dir', '/workspace/dataset')
+        self.results_dir = rospy.get_param('~results_dir', '/workspace/results')
         self.model_id = rospy.get_param('~model_id', "vikhyatk/moondream2")
         self.model_revision = rospy.get_param('~model_revision', "2025-01-09")
         self.bridge = CvBridge()
@@ -106,7 +108,7 @@ class GazeDetectionEvaluator:
                     rospy.loginfo(f"    Left arm: {left_arm.shape}")
                 if right_arm is not None:
                     rospy.loginfo(f"    Right arm: {right_arm.shape}")
-                # TODO: Add your evaluation logic here
+                # TODO: Add evaluation logic here
                 # For now, just count processed sessions
                 total_processed += 1
         rospy.loginfo(f"Finished evaluating {total_processed} sessions.")
