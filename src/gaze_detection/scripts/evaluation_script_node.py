@@ -219,8 +219,8 @@ class GazeDetectionEvaluator:
                 rospy.logwarn(f"    No depth for frame {idx}, pixel ({u},{v})")
                 continue
             # Project to 3D in image coordinate system
-            x_img = (u - self.K[0, 2]) * depth / self.K[0, 0]
-            y_img = (v - self.K[1, 2]) * depth / self.K[1, 1]
+            x_img = (u - self.K_d[0, 2]) * depth / self.K_d[0, 0]
+            y_img = (v - self.K_d[1, 2]) * depth / self.K_d[1, 1]
             z_img = depth
             pt_img = np.array([[x_img], [y_img], [z_img]])
             # Convert to camera coordinate system
