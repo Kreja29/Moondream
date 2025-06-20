@@ -78,7 +78,7 @@ class GazeDetectionEvaluator:
     def evaluate_dataset(self):
         rospy.loginfo(f"Evaluating dataset in {self.dataset_dir}")
         id_list = self.dataset_helper.get_id_list()
-        session_order = ['ET_center', 'MT']
+        session_order = ['MT', 'ET_center', 'OM1']
         total_processed = 0
         for user_id in id_list:
             rospy.loginfo(f"Processing {user_id}")
@@ -88,30 +88,62 @@ class GazeDetectionEvaluator:
                     rospy.logwarn(f"  Session {session} not found for {user_id}")
                     continue
                 rospy.loginfo(f"  Processing session {session}")
-                # Load data
-                rgb_file, depth_file = self.dataset_helper.get_video_files(user_id, session)
-                mouse_events = self.dataset_helper.load_mouse_events(user_id, session)
-                gaze_labels = self.dataset_helper.load_gaze_labels(user_id, session)
-                speech_labels = self.dataset_helper.load_speech_labels(user_id, session)
-                left_arm = self.dataset_helper.load_left_arm(user_id, session) if session == 'ET_center' else None
-                right_arm = self.dataset_helper.load_right_arm(user_id, session) if session == 'ET_center' else None
-                # Example: Log loaded data shapes
-                rospy.loginfo(f"    RGB file: {rgb_file}")
-                rospy.loginfo(f"    Depth file: {depth_file}")
-                if mouse_events is not None:
-                    rospy.loginfo(f"    Mouse events: {mouse_events.shape}")
-                if gaze_labels is not None:
-                    rospy.loginfo(f"    Gaze labels: {gaze_labels.shape}")
-                if speech_labels is not None:
-                    rospy.loginfo(f"    Speech labels: {len(speech_labels)} lines")
-                if left_arm is not None:
-                    rospy.loginfo(f"    Left arm: {left_arm.shape}")
-                if right_arm is not None:
-                    rospy.loginfo(f"    Right arm: {right_arm.shape}")
-                # TODO: Add evaluation logic here
-                # For now, just count processed sessions
+                if session == 'MT':
+                    self.process_mt_session(user_id, session)
+                elif session == 'ET_center':
+                    self.process_et_center_session(user_id, session)
+                elif session == 'OM1':
+                    self.process_om_session(user_id, session)
+                else:
+                    rospy.logwarn(f"  Unknown session type: {session}")
+                    continue
                 total_processed += 1
         rospy.loginfo(f"Finished evaluating {total_processed} sessions.")
+
+    def process_et_center_session(self, user_id: str, session: str):
+        rgb_file, depth_file = self.dataset_helper.get_video_files(user_id, session)
+        mouse_events = self.dataset_helper.load_mouse_events(user_id, session)
+        speech_labels = self.dataset_helper.load_speech_labels(user_id, session)
+        left_arm = self.dataset_helper.load_left_arm(user_id, session)
+        right_arm = self.dataset_helper.load_right_arm(user_id, session)
+        # Log loaded data shapes
+        rospy.loginfo(f"    RGB file: {rgb_file}")
+        rospy.loginfo(f"    Depth file: {depth_file}")
+        if mouse_events is not None:
+            rospy.loginfo(f"    Mouse events: {mouse_events.shape}")
+        if speech_labels is not None:
+            rospy.loginfo(f"    Speech labels: {len(speech_labels)} lines")
+        if left_arm is not None:
+            rospy.loginfo(f"    Left arm: {left_arm.shape}")
+        if right_arm is not None:
+            rospy.loginfo(f"    Right arm: {right_arm.shape}")
+        # TODO: Add ET_center-specific evaluation logic here
+
+    def process_mt_session(self, user_id: str, session: str):
+        rgb_file, depth_file = self.dataset_helper.get_video_files(user_id, session)
+        mouse_events = self.dataset_helper.load_mouse_events(user_id, session)
+        gaze_labels = self.dataset_helper.load_gaze_labels(user_id, session)
+        speech_labels = self.dataset_helper.load_speech_labels(user_id, session)
+        # Log loaded data shapes
+        rospy.loginfo(f"    RGB file: {rgb_file}")
+        rospy.loginfo(f"    Depth file: {depth_file}")
+        if mouse_events is not None:
+            rospy.loginfo(f"    Mouse events: {mouse_events.shape}")
+        if gaze_labels is not None:
+            rospy.loginfo(f"    Gaze labels: {gaze_labels.shape}")
+        if speech_labels is not None:
+            rospy.loginfo(f"    Speech labels: {len(speech_labels)} lines")
+        # TODO: Add MT-specific evaluation logic here
+
+    def process_om_session(self, user_id: str, session: str):
+        rgb_file, depth_file = self.dataset_helper.get_video_files(user_id, session)
+        speech_labels = self.dataset_helper.load_speech_labels(user_id, session)
+        # Log loaded data shapes
+        rospy.loginfo(f"    RGB file: {rgb_file}")
+        rospy.loginfo(f"    Depth file: {depth_file}")
+        if speech_labels is not None:
+            rospy.loginfo(f"    Speech labels: {len(speech_labels)} lines")
+        # TODO: Add OM-specific evaluation logic here
 
     def initialize_model(self) -> Optional[AutoModelForCausalLM]:
         """Initialize the Moondream 2 model with error handling."""
