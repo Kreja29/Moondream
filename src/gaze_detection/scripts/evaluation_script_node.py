@@ -92,12 +92,30 @@ class GazeDetectionEvaluator:
             [0.0],
             [1.0]
         ])
-        # Camera intrinsics matrix 
-        self.K = np.array([
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
+        # Depth intrinsics
+
+        K_d = np.array([
+            [374.29986435, 0.0, 259.08931589],
+            [0.0, 374.93952842, 221.61052956],
             [0.0, 0.0, 1.0]
         ])
+
+        # RGB intrinsics
+
+        K_rgb = np.array([
+            [1099.89415734, 0.0, 973.3031593],
+            [0.0, 1100.774053, 556.2757212],
+            [0.0, 0.0, 1.0]
+        ])
+
+        # Extrinsics (depth → RGB)
+
+        R = np.array([
+            [0.99979075, 0.00392332, -0.0200765],
+            [-0.00408644, 0.99995893, -0.00808996],
+            [0.02004393, 0.00817031, 0.99976572]
+        ])
+        T = np.array([[0.0510586], [-0.00144841], [0.01175079]])
 
         # Initialize model
         self.model = self.initialize_model()
