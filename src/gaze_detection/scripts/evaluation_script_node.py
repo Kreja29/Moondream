@@ -92,7 +92,12 @@ class GazeDetectionEvaluator:
             [0.0],
             [1.0]
         ])
-        self.K = np.eye(3) 
+        # Camera intrinsics matrix 
+        self.K = np.array([
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0]
+        ])
 
         # Initialize model
         self.model = self.initialize_model()
