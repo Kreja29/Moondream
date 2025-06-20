@@ -184,11 +184,14 @@ class GazeDetectionEvaluator:
             if depth is None:
                 rospy.logwarn(f"    No depth for frame {idx}, pixel ({u},{v})")
                 continue
-            # Project to 3D (kinect camera coordinates)
-            x = (u - self.K[0, 2]) * depth / self.K[0, 0]
-            y = (v - self.K[1, 2]) * depth / self.K[1, 1]
-            z = depth
-            pred_3d = np.array([x, y, z])
+            # Project to 3D in image coordinate system
+            x_img = (u - self.K[0, 2]) * depth / self.K[0, 0]
+            y_img = (v - self.K[1, 2]) * depth / self.K[1, 1]
+            z_img = depth
+            pt_img = np.array([[x_img], [y_img], [z_img]])
+            # Convert to camera coordinate system
+            pt_cam = np.linalg.inv(self.R_pos) @ (pt_img - self.T_pos)
+            pred_3d = pt_cam.flatten()
             # Get marker index from gaze_labels
             marker_idx = gaze_labels[idx]
             if marker_idx < 0 or marker_idx >= self.marker_positions_kinect.shape[0]:
@@ -196,9 +199,6 @@ class GazeDetectionEvaluator:
                 continue
             # Marker position in Kinect camera coordinates
             marker_kinect = self.marker_positions_kinect[marker_idx]
-            # Optionally, convert marker_kinect to image coordinates:
-            # pt_img = self.R_pos @ marker_kinect.reshape(3, 1) + self.T_pos
-            # pt_img = pt_img.flatten()
             # Compute error
             error = np.linalg.norm(pred_3d - marker_kinect)
             errors.append(error)
