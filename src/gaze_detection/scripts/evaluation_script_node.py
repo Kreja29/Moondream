@@ -5,10 +5,48 @@ import sys
 import rospy
 import cv2
 import numpy as np
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Tuple, Any, Optional
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import traceback
+import torch
+from transformers import AutoModelForCausalLM
+
+class DatasetHelper:
+    def __init__(self, dataset_path):
+        self.dataset_path = dataset_path
+
+    def get_id_list(self) -> List[str]:
+        return [d for d in os.listdir(self.dataset_path) if d.startswith('ID_') and os.path.isdir(os.path.join(self.dataset_path, d))]
+
+    def get_session_path(self, user_id: str, session: str) -> str:
+        return os.path.join(self.dataset_path, user_id, session)
+
+    def get_video_files(self, user_id: str, session: str, camera: str = 'kinect2') -> Tuple[Optional[str], Optional[str]]:
+        session_path = self.get_session_path(user_id, session)
+        rgb = os.path.join(session_path, camera, 'rgb.avi')
+        depth = os.path.join(session_path, camera, 'depth.avi')
+        return (rgb if os.path.exists(rgb) else None, depth if os.path.exists(depth) else None)
+
+    def load_mouse_events(self, user_id: str, session: str) -> Optional[np.ndarray]:
+        path = os.path.join(self.get_session_path(user_id, session), 'mouse_event.txt')
+        return np.loadtxt(path, dtype=int) if os.path.exists(path) else None
+
+    def load_gaze_labels(self, user_id: str, session: str) -> Optional[np.ndarray]:
+        path = os.path.join(self.get_session_path(user_id, session), 'gaze_label.txt')
+        return np.loadtxt(path, dtype=int) if os.path.exists(path) else None
+
+    def load_speech_labels(self, user_id: str, session: str) -> Optional[List[str]]:
+        path = os.path.join(self.get_session_path(user_id, session), 'speech_label.txt')
+        return open(path).readlines() if os.path.exists(path) else None
+
+    def load_left_arm(self, user_id: str, session: str) -> Optional[np.ndarray]:
+        path = os.path.join(self.get_session_path(user_id, session), 'left_arm.txt')
+        return np.loadtxt(path, delimiter=',') if os.path.exists(path) else None
+
+    def load_right_arm(self, user_id: str, session: str) -> Optional[np.ndarray]:
+        path = os.path.join(self.get_session_path(user_id, session), 'right_arm.txt')
+        return np.loadtxt(path, delimiter=',') if os.path.exists(path) else None
 
 class GazeDetectionEvaluator:
     def __init__(self):
@@ -30,44 +68,53 @@ class GazeDetectionEvaluator:
         # Ensure results directory exists
         os.makedirs(self.results_dir, exist_ok=True)
 
+        # Initialize dataset helper
+        self.dataset_helper = DatasetHelper(self.dataset_dir)
+
         rospy.loginfo("GazeDetectionEvaluator initialized")
 
     def evaluate_dataset(self):
-        # TODO: Implement dataset evaluation logic here
         rospy.loginfo(f"Evaluating dataset in {self.dataset_dir}")
-        # Example: iterate over images in dataset_dir
-        for filename in os.listdir(self.dataset_dir):
-            if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp')):
-                image_path = os.path.join(self.dataset_dir, filename)
-                try:
-                    # Read image
-                    frame = cv2.imread(image_path)
-                    if frame is None:
-                        rospy.logwarn(f"Failed to read image: {image_path}")
-                        continue
-
-                    # TODO: Run processing/evaluation here
-                    # result = self.process_frame(frame)
-
-                    # TODO: Save or log results as needed
-
-                    self.processed_count += 1
-                except Exception as e:
-                    rospy.logerr(f"Error processing {filename}: {e}")
-                    traceback.print_exc()
-
-        rospy.loginfo(f"Finished evaluating {self.processed_count} images.")
-
-    # def process_frame(self, frame: np.ndarray) -> Any:
-    #     # TODO: Implement frame processing/evaluation logic
-    #     pass
+        id_list = self.dataset_helper.get_id_list()
+        session_order = ['ET_center', 'MT']
+        total_processed = 0
+        for user_id in id_list:
+            rospy.loginfo(f"Processing {user_id}")
+            for session in session_order:
+                session_path = self.dataset_helper.get_session_path(user_id, session)
+                if not os.path.exists(session_path):
+                    rospy.logwarn(f"  Session {session} not found for {user_id}")
+                    continue
+                rospy.loginfo(f"  Processing session {session}")
+                # Load data
+                rgb_file, depth_file = self.dataset_helper.get_video_files(user_id, session)
+                mouse_events = self.dataset_helper.load_mouse_events(user_id, session)
+                gaze_labels = self.dataset_helper.load_gaze_labels(user_id, session)
+                speech_labels = self.dataset_helper.load_speech_labels(user_id, session)
+                left_arm = self.dataset_helper.load_left_arm(user_id, session) if session == 'ET_center' else None
+                right_arm = self.dataset_helper.load_right_arm(user_id, session) if session == 'ET_center' else None
+                # Example: Log loaded data shapes
+                rospy.loginfo(f"    RGB file: {rgb_file}")
+                rospy.loginfo(f"    Depth file: {depth_file}")
+                if mouse_events is not None:
+                    rospy.loginfo(f"    Mouse events: {mouse_events.shape}")
+                if gaze_labels is not None:
+                    rospy.loginfo(f"    Gaze labels: {gaze_labels.shape}")
+                if speech_labels is not None:
+                    rospy.loginfo(f"    Speech labels: {len(speech_labels)} lines")
+                if left_arm is not None:
+                    rospy.loginfo(f"    Left arm: {left_arm.shape}")
+                if right_arm is not None:
+                    rospy.loginfo(f"    Right arm: {right_arm.shape}")
+                # TODO: Add your evaluation logic here
+                # For now, just count processed sessions
+                total_processed += 1
+        rospy.loginfo(f"Finished evaluating {total_processed} sessions.")
 
     def initialize_model(self) -> Optional[AutoModelForCausalLM]:
         """Initialize the Moondream 2 model with error handling."""
         try:
             rospy.loginfo("\nInitializing Moondream 2 model...")
-            import torch
-            from transformers import AutoModelForCausalLM
             if torch.cuda.is_available():
                 rospy.loginfo(f"GPU detected: {torch.cuda.get_device_name(0)}")
                 device = "cuda"
