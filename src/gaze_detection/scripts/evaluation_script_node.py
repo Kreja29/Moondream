@@ -61,6 +61,20 @@ class GazeDetectionEvaluator:
         self.processing_times = []
         self.processed_count = 0
 
+        # R_pos and T_pose are from camera to rgb
+        # Rotation matrix
+        self.R_pos = np.array([
+            [1.0,  0.0,  0.0],
+            [0.0, -1.0,  0.0],
+            [0.0,  0.0, -1.0]
+        ])
+
+        # Translation vector
+        self.T_pos = np.array([
+            [0.0],
+            [0.0],
+            [1.0]
+        ])
         # Marker positions in Kinect camera coordinates
         self.marker_positions_kinect = np.array([
             [ 0.08278523,  0.63388652,  0.81159113],
@@ -79,43 +93,33 @@ class GazeDetectionEvaluator:
             [-0.16872942, -0.24101171,  0.43772051],
             [-0.36351209, -0.23879948,  0.45211431],
         ])
-        # Rotation matrix
-        self.R_pos = np.array([
-            [1.0,  0.0,  0.0],
-            [0.0, -1.0,  0.0],
-            [0.0,  0.0, -1.0]
+        # Precompute marker positions in RGB coordinate system
+        self.marker_positions_rgb = np.array([
+            (self.R_pos @ marker.reshape(3, 1) + self.T_pos).flatten()
+            for marker in self.marker_positions_kinect
         ])
 
-        # Translation vector
-        self.T_pos = np.array([
-            [0.0],
-            [0.0],
-            [1.0]
-        ])
         # Depth intrinsics
-
-        K_d = np.array([
+        self.K_d = np.array([
             [374.29986435, 0.0, 259.08931589],
             [0.0, 374.93952842, 221.61052956],
             [0.0, 0.0, 1.0]
         ])
 
         # RGB intrinsics
-
-        K_rgb = np.array([
+        self.K_rgb = np.array([
             [1099.89415734, 0.0, 973.3031593],
             [0.0, 1100.774053, 556.2757212],
             [0.0, 0.0, 1.0]
         ])
 
         # Extrinsics (depth → RGB)
-
-        R = np.array([
-            [0.99979075, 0.00392332, -0.0200765],
-            [-0.00408644, 0.99995893, -0.00808996],
-            [0.02004393, 0.00817031, 0.99976572]
+        self.R_extr = np.array([
+            [0.9997907489813892,  0.0039233244105278, -0.0200764981210007],
+            [-0.0040864364506259,  0.9999589259368433, -0.0080899614566265],
+            [0.0200439339543859,  0.0081703099576737,  0.999765715928901]
         ])
-        T = np.array([[0.0510586], [-0.00144841], [0.01175079]])
+        self.T_extr = np.array([[0.0510585959051953], [-0.0014484138682882], [0.0117507879232922]])
 
         # Initialize model
         self.model = self.initialize_model()
@@ -195,6 +199,7 @@ class GazeDetectionEvaluator:
             rospy.logwarn(f"    Mouse events or gaze labels not found for {user_id} {session}")
             return
         cap = cv2.VideoCapture(rgb_file)
+        cap_depth = cv2.VideoCapture(depth_file)
         errors = []
         for idx, event in enumerate(mouse_events):
             if event == -1:
@@ -204,46 +209,43 @@ class GazeDetectionEvaluator:
             if not ret:
                 rospy.logwarn(f"    Could not read frame {idx} from {rgb_file}")
                 continue
+            cap_depth.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret_depth, depth_frame = cap_depth.read()
+            if not ret_depth:
+                rospy.logwarn(f"    Could not read depth frame {idx} from {depth_file}")
+                depth_frame = None
             # Process frame to get gaze (2D, normalized 0-1)
             gaze_2d = self.get_gaze_from_frame(frame)
             if gaze_2d is None:
                 rospy.logwarn(f"    No gaze detected in frame {idx}")
                 continue
-            # Convert normalized gaze to pixel coordinates
-            h, w = frame.shape[:2]
-            u = int(gaze_2d[0] * w)
-            v = int(gaze_2d[1] * h)
-            # Get depth at (u, v) from depth file (if available)
-            depth = self.get_depth_at_pixel(depth_file, idx, u, v)
+            u_norm, v_norm = gaze_2d  # normalized [0, 1]
+            # Get depth at (u_norm, v_norm) from depth frame
+            depth = self.get_depth_at_pixel(depth_frame, u_norm, v_norm)
             if depth is None:
-                rospy.logwarn(f"    No depth for frame {idx}, pixel ({u},{v})")
+                rospy.logwarn(f"    No depth for frame {idx}, normalized ({u_norm},{v_norm})")
                 continue
             # Project to 3D in image coordinate system
-            x_img = (u - self.K_d[0, 2]) * depth / self.K_d[0, 0]
-            y_img = (v - self.K_d[1, 2]) * depth / self.K_d[1, 1]
+            x_img = (u_norm * depth_frame.shape[1] - self.K_d[0, 2]) * depth / self.K_d[0, 0]
+            y_img = (v_norm * depth_frame.shape[0] - self.K_d[1, 2]) * depth / self.K_d[1, 1]
             z_img = depth
             pt_img = np.array([[x_img], [y_img], [z_img]])
-            # Convert to camera coordinate system
-            pt_cam = np.linalg.inv(self.R_pos) @ (pt_img - self.T_pos)
-            pred_3d = pt_cam.flatten()
+            # Convert to RGB camera coordinate system using extrinsics
+            pt_rgb = self.R_extr @ pt_img + self.T_extr
+            pred_3d_rgb = pt_rgb.flatten()
             # Get marker index from gaze_labels
             marker_idx = gaze_labels[idx]
             if marker_idx < 0 or marker_idx >= self.marker_positions_kinect.shape[0]:
                 rospy.logwarn(f"    Invalid marker index {marker_idx} at frame {idx}")
                 continue
-
-            # Marker position in Kinect image coordinates
-            marker_img = self.marker_positions_kinect[marker_idx].reshape(3, 1)
-
-            # Convert marker to Kinect camera coordinate system
-            marker_cam = np.linalg.inv(self.R_pos) @ (marker_img - self.T_pos)
-            marker_cam = marker_cam.flatten()
-
-            # Compute error in camera coordinate system
-            error = np.linalg.norm(pred_3d - marker_cam)
+            # Marker position in RGB coordinate system (precomputed)
+            marker_rgb = self.marker_positions_rgb[marker_idx]
+            # Compute error in RGB coordinate system
+            error = np.linalg.norm(pred_3d_rgb - marker_rgb)
             errors.append(error)
             rospy.loginfo(f"    Frame {idx}: error={error:.3f}m, marker={marker_idx}")
         cap.release()
+        cap_depth.release()
         if errors:
             mean_error = np.mean(errors)
             rospy.loginfo(f"    MT session mean error: {mean_error:.3f}m over {len(errors)} frames")
@@ -318,11 +320,28 @@ class GazeDetectionEvaluator:
             rospy.logwarn(f"Error detecting gaze: {e}")
         return None
 
-    def get_depth_at_pixel(self, depth_file: Optional[str], frame_idx: int, u: int, v: int) -> Optional[float]:
-        # Placeholder: implement actual depth extraction from depth video or file
-        # For now, return a fixed value (e.g., 1.0 meter)
-        # TODO: Implement actual depth extraction
-        return 1.0
+    def get_depth_at_pixel(self, depth_frame: Optional[np.ndarray], u_norm: float, v_norm: float, filtering: bool = True, filter_width: int = 3) -> Optional[float]:
+        # Extract the depth value from the depth frame at normalized coordinates (u_norm, v_norm)
+        if depth_frame is None:
+            return None
+        h, w = depth_frame.shape[:2]
+        x = int(u_norm * w)
+        y = int(v_norm * h)
+        z = depth_frame[y, x]
+        if filtering:
+            half = filter_width // 2
+            # Do not apply filtering if filter would be outside of image
+            if (x - half) < 0 or (x + half) > (w - 1):
+                filtering = False
+            elif (y - half) < 0 or (y + half) > (h - 1):
+                filtering = False
+            # Return the filtered depth value of the pixel neighborhood
+            if filtering:
+                z_list = depth_frame[y - half : y + half + 1, x - half : x + half + 1]
+                z = np.median(z_list)
+        if z <= 0:
+            rospy.logwarn("Warning! Depth is zero!")
+        return float(z)
 
 if __name__ == "__main__":
     try:
