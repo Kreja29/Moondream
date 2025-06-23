@@ -400,6 +400,7 @@ class GazeDetectionEvaluator:
             rospy.logwarn("Warning! Depth is zero!")
         return float(z)
     
+    @staticmethod
     def depth_to_points(depth, fx, fy, cx, cy): # depth camera intrinsics
         h, w = depth.shape
         i, j = np.indices((h, w))
@@ -408,11 +409,13 @@ class GazeDetectionEvaluator:
         y = (i - cy) * z / fy
         return np.stack((x, y, z), axis=-1)  # shape: (H, W, 3)
 
+    @staticmethod
     def transform_to_rgb_frame(points, R, T): # depth to rgb camera frame
         points_flat = points.reshape(-1, 3).T  # shape: (3, N)
-        transformed = R @ points_flat + T.T  # shape: (3, N)
+        transformed = R @ points_flat + T  # shape: (3, N)
         return transformed.T.reshape(points.shape)
     
+    @staticmethod
     def project_to_image(points, fx, fy, cx, cy, rgb_shape): # rgb camera intrinsics
         x, y, z = points[..., 0], points[..., 1], points[..., 2]
         u = (x * fx / z + cx).astype(np.int32)
@@ -425,9 +428,9 @@ class GazeDetectionEvaluator:
         fx_d, fy_d, cx_d, cy_d = intrinsics_d
         fx_rgb, fy_rgb, cx_rgb, cy_rgb = intrinsics_rgb
 
-        points = self.depth_to_points(depth, fx_d, fy_d, cx_d, cy_d)
-        points_rgb = self.transform_to_rgb_frame(points, R, T)
-        u, v, mask = self.project_to_image(points_rgb, fx_rgb, fy_rgb, cx_rgb, cy_rgb, rgb_shape)
+        points = GazeDetectionEvaluator.depth_to_points(depth, fx_d, fy_d, cx_d, cy_d)
+        points_rgb = GazeDetectionEvaluator.transform_to_rgb_frame(points, R, T)
+        u, v, mask = GazeDetectionEvaluator.project_to_image(points_rgb, fx_rgb, fy_rgb, cx_rgb, cy_rgb, rgb_shape)
 
         aligned_depth = np.zeros(rgb_shape[:2], dtype=np.float32)
         aligned_depth[v[mask], u[mask]] = points_rgb[..., 2][mask]
