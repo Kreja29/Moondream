@@ -130,7 +130,8 @@ RUN source /opt/venv_py39/bin/activate && \
         pyvips-binary==8.16.0 \
         huggingface-hub==0.24.0 \
         gradio==4.38.1 \
-        open3d && \
+        open3d \
+        scipy && \
     pip install torch==2.1.2+cu118 --index-url https://download.pytorch.org/whl/cu118 && \
     pip install datasets==3.1.0 editdistance==0.8.1 rospkg catkin_pkg netifaces && \
     deactivate

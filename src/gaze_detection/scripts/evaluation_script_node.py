@@ -6,12 +6,14 @@ import sys
 import rospy
 import cv2
 import numpy as np
+from scipy.interpolate import griddata
 from typing import List, Dict, Tuple, Any, Optional
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import traceback
 import torch
 from transformers import AutoModelForCausalLM
+import time
 
 class DatasetHelper:
     def __init__(self, dataset_path):
@@ -201,9 +203,15 @@ class GazeDetectionEvaluator:
         cap = cv2.VideoCapture(rgb_file)
         cap_depth = cv2.VideoCapture(depth_file)
         errors = []
+        x_errors = []
+        y_errors = []
+        z_errors = []
+        model_times = []
+        calc_times = []
         for idx, event in enumerate(mouse_events):
             if event == -1:
                 continue
+            # Set video to the correct frame
             cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
             ret, frame = cap.read()
             if not ret:
@@ -214,25 +222,46 @@ class GazeDetectionEvaluator:
             if not ret_depth:
                 rospy.logwarn(f"    Could not read depth frame {idx} from {depth_file}")
                 depth_frame = None
-            # Process frame to get gaze (2D, normalized 0-1)
+            # Align and fill depth map if available
+            if depth_frame is not None:
+                # Convert to grayscale if needed
+                if len(depth_frame.shape) == 3:
+                    depth_frame = cv2.cvtColor(depth_frame, cv2.COLOR_BGR2GRAY)
+                # Align depth to RGB frame
+                aligned_depth = self.align_depth_to_rgb(
+                    depth_frame,
+                    frame.shape,
+                    [self.K_d[0,0], self.K_d[1,1], self.K_d[0,2], self.K_d[1,2]],
+                    [self.K_rgb[0,0], self.K_rgb[1,1], self.K_rgb[0,2], self.K_rgb[1,2]],
+                    self.R_extr,
+                    self.T_extr
+                )
+                # Fill empty pixels in the aligned depth map
+                aligned_depth = self.fill_empty_pixels(aligned_depth)
+            else:
+                aligned_depth = None
+            # --- Model (gaze) processing time ---
+            t0 = time.time()
             gaze_2d = self.get_gaze_from_frame(frame)
+            t1 = time.time()
+            model_times.append(t1 - t0)
             if gaze_2d is None:
                 rospy.logwarn(f"    No gaze detected in frame {idx}")
                 continue
             u_norm, v_norm = gaze_2d  # normalized [0, 1]
-            # Get depth at (u_norm, v_norm) from depth frame
-            depth = self.get_depth_at_pixel(depth_frame, u_norm, v_norm)
+            # --- Calculation (projection/error) processing time ---
+            t2 = time.time()
+            # Get depth at (u_norm, v_norm) from aligned depth
+            depth = self.get_depth_at_pixel(aligned_depth, u_norm, v_norm) if aligned_depth is not None else None
             if depth is None:
                 rospy.logwarn(f"    No depth for frame {idx}, normalized ({u_norm},{v_norm})")
                 continue
-            # Project to 3D in image coordinate system
-            x_img = (u_norm * depth_frame.shape[1] - self.K_d[0, 2]) * depth / self.K_d[0, 0]
-            y_img = (v_norm * depth_frame.shape[0] - self.K_d[1, 2]) * depth / self.K_d[1, 1]
+            # Project to 3D in image coordinate system (RGB)
+            x_img = (u_norm * frame.shape[1] - self.K_rgb[0, 2]) * depth / self.K_rgb[0, 0]
+            y_img = (v_norm * frame.shape[0] - self.K_rgb[1, 2]) * depth / self.K_rgb[1, 1]
             z_img = depth
             pt_img = np.array([[x_img], [y_img], [z_img]])
-            # Convert to RGB camera coordinate system using extrinsics
-            pt_rgb = self.R_extr @ pt_img + self.T_extr
-            pred_3d_rgb = pt_rgb.flatten()
+            pred_3d_rgb = pt_img.flatten()
             # Get marker index from gaze_labels
             marker_idx = gaze_labels[idx]
             if marker_idx < 0 or marker_idx >= self.marker_positions_kinect.shape[0]:
@@ -240,15 +269,36 @@ class GazeDetectionEvaluator:
                 continue
             # Marker position in RGB coordinate system (precomputed)
             marker_rgb = self.marker_positions_rgb[marker_idx]
-            # Compute error in RGB coordinate system
-            error = np.linalg.norm(pred_3d_rgb - marker_rgb)
+            # Compute error vector and distance in RGB coordinate system
+            error_vec = pred_3d_rgb - marker_rgb
+            error = np.linalg.norm(error_vec)
             errors.append(error)
-            rospy.loginfo(f"    Frame {idx}: error={error:.3f}m, marker={marker_idx}")
+            x_errors.append(error_vec[0])
+            y_errors.append(error_vec[1])
+            z_errors.append(error_vec[2])
+            t3 = time.time()
+            calc_times.append(t3 - t2)
+            # Log all error components and timing for this frame
+            rospy.loginfo(f"    Frame {idx}: error={error:.3f}m (x={error_vec[0]:.3f}, y={error_vec[1]:.3f}, z={error_vec[2]:.3f}), marker={marker_idx}, model_time={t1-t0:.3f}s, calc_time={t3-t2:.3f}s")
         cap.release()
         cap_depth.release()
         if errors:
+            # Compute and log mean and std for all error components and timings
             mean_error = np.mean(errors)
-            rospy.loginfo(f"    MT session mean error: {mean_error:.3f}m over {len(errors)} frames")
+            std_error = np.std(errors)
+            mean_x = np.mean(x_errors)
+            std_x = np.std(x_errors)
+            mean_y = np.mean(y_errors)
+            std_y = np.std(y_errors)
+            mean_z = np.mean(z_errors)
+            std_z = np.std(z_errors)
+            mean_model_time = np.mean(model_times)
+            std_model_time = np.std(model_times)
+            mean_calc_time = np.mean(calc_times)
+            std_calc_time = np.std(calc_times)
+            rospy.loginfo(f"    MT session mean error: {mean_error:.3f}±{std_error:.3f}m over {len(errors)} frames")
+            rospy.loginfo(f"    Mean x error: {mean_x:.3f}±{std_x:.3f}m, y error: {mean_y:.3f}±{std_y:.3f}m, z error: {mean_z:.3f}±{std_z:.3f}m")
+            rospy.loginfo(f"    Model time: {mean_model_time:.3f}±{std_model_time:.3f}s, Calc time: {mean_calc_time:.3f}±{std_calc_time:.3f}s")
         else:
             rospy.loginfo(f"    No valid frames processed for MT session")
 
@@ -325,8 +375,8 @@ class GazeDetectionEvaluator:
         if depth_frame is None:
             return None
         h, w = depth_frame.shape[:2]
-        x = int(u_norm * w)
-        y = int(v_norm * h)
+        x = min(int(u_norm * w), w - 1)
+        y = min(int(v_norm * h), h - 1)
         z = depth_frame[y, x]
         if filtering:
             half = filter_width // 2
@@ -342,6 +392,78 @@ class GazeDetectionEvaluator:
         if z <= 0:
             rospy.logwarn("Warning! Depth is zero!")
         return float(z)
+    
+    def depth_to_points(depth, fx, fy, cx, cy): # depth camera intrinsics
+        h, w = depth.shape
+        i, j = np.indices((h, w))
+        z = depth.astype(np.float32)
+        x = (j - cx) * z / fx
+        y = (i - cy) * z / fy
+        return np.stack((x, y, z), axis=-1)  # shape: (H, W, 3)
+
+    def transform_to_rgb_frame(points, R, T): # depth to rgb camera frame
+        points_flat = points.reshape(-1, 3).T  # shape: (3, N)
+        transformed = R @ points_flat + T.T  # shape: (3, N)
+        return transformed.T.reshape(points.shape)
+    
+    def project_to_image(points, fx, fy, cx, cy, rgb_shape): # rgb camera intrinsics
+        x, y, z = points[..., 0], points[..., 1], points[..., 2]
+        u = (x * fx / z + cx).astype(np.int32)
+        v = (y * fy / z + cy).astype(np.int32)
+
+        mask = (z > 0) & (u >= 0) & (u < rgb_shape[1]) & (v >= 0) & (v < rgb_shape[0])
+        return u, v, mask
+
+    def align_depth_to_rgb(self, depth, rgb_shape, intrinsics_d, intrinsics_rgb, R, T): # depth to rgb camera frame
+        fx_d, fy_d, cx_d, cy_d = intrinsics_d
+        fx_rgb, fy_rgb, cx_rgb, cy_rgb = intrinsics_rgb
+
+        points = self.depth_to_points(depth, fx_d, fy_d, cx_d, cy_d)
+        points_rgb = self.transform_to_rgb_frame(points, R, T)
+        u, v, mask = self.project_to_image(points_rgb, fx_rgb, fy_rgb, cx_rgb, cy_rgb, rgb_shape)
+
+        aligned_depth = np.zeros(rgb_shape[:2], dtype=np.float32)
+        aligned_depth[v[mask], u[mask]] = points_rgb[..., 2][mask]
+        return aligned_depth
+
+    def fill_empty_pixels(self, depth_map, method='linear'):
+        """
+        Fill empty (zero) pixels in a depth map using interpolation.
+
+        Parameters:
+            depth_map (np.ndarray): 2D array with depth values, 0 for missing.
+            method (str): 'linear', 'nearest', or 'cubic'. 'linear' recommended.
+
+        Returns:
+            np.ndarray: depth map with missing values filled.
+        """
+        h, w = depth_map.shape
+        mask = depth_map > 0
+
+        if np.count_nonzero(mask) < 100:
+            rospy.logwarn("⚠️ Warning: Too few valid points to interpolate.")
+            return depth_map
+
+        # Get valid pixel locations and their depth values
+        y_coords, x_coords = np.where(mask)
+        valid_points = np.stack((x_coords, y_coords), axis=-1)
+        valid_values = depth_map[y_coords, x_coords]
+
+        # Prepare grid of all pixel locations
+        grid_x, grid_y = np.meshgrid(np.arange(w), np.arange(h))
+        grid_points = np.stack((grid_x.ravel(), grid_y.ravel()), axis=-1)
+
+        # Interpolate
+        interpolated = griddata(
+            points=valid_points,
+            values=valid_values,
+            xi=grid_points,
+            method=method,
+            fill_value=0  # fill unresolvable pixels with 0 again
+        )
+
+        return interpolated.reshape((h, w)).astype(depth_map.dtype)
+
 
 if __name__ == "__main__":
     try:
