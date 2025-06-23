@@ -208,78 +208,85 @@ class GazeDetectionEvaluator:
         z_errors = []
         model_times = []
         calc_times = []
-        for idx, event in enumerate(mouse_events):
-            if event == -1:
-                continue
-            # Set video to the correct frame
-            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-            ret, frame = cap.read()
-            if not ret:
-                rospy.logwarn(f"    Could not read frame {idx} from {rgb_file}")
-                continue
-            cap_depth.set(cv2.CAP_PROP_POS_FRAMES, idx)
-            ret_depth, depth_frame = cap_depth.read()
-            if not ret_depth:
-                rospy.logwarn(f"    Could not read depth frame {idx} from {depth_file}")
-                depth_frame = None
-            # Align and fill depth map if available
-            if depth_frame is not None:
-                # Convert to grayscale if needed
-                if len(depth_frame.shape) == 3:
-                    depth_frame = cv2.cvtColor(depth_frame, cv2.COLOR_BGR2GRAY)
-                # Align depth to RGB frame
-                aligned_depth = self.align_depth_to_rgb(
-                    depth_frame,
-                    frame.shape,
-                    [self.K_d[0,0], self.K_d[1,1], self.K_d[0,2], self.K_d[1,2]],
-                    [self.K_rgb[0,0], self.K_rgb[1,1], self.K_rgb[0,2], self.K_rgb[1,2]],
-                    self.R_extr,
-                    self.T_extr
-                )
-                # Fill empty pixels in the aligned depth map
-                aligned_depth = self.fill_empty_pixels(aligned_depth)
-            else:
-                aligned_depth = None
-            # --- Model (gaze) processing time ---
-            t0 = time.time()
-            gaze_2d = self.get_gaze_from_frame(frame)
-            t1 = time.time()
-            model_times.append(t1 - t0)
-            if gaze_2d is None:
-                rospy.logwarn(f"    No gaze detected in frame {idx}")
-                continue
-            u_norm, v_norm = gaze_2d  # normalized [0, 1]
-            # --- Calculation (projection/error) processing time ---
-            t2 = time.time()
-            # Get depth at (u_norm, v_norm) from aligned depth
-            depth = self.get_depth_at_pixel(aligned_depth, u_norm, v_norm) if aligned_depth is not None else None
-            if depth is None:
-                rospy.logwarn(f"    No depth for frame {idx}, normalized ({u_norm},{v_norm})")
-                continue
-            # Project to 3D in image coordinate system (RGB)
-            x_img = (u_norm * frame.shape[1] - self.K_rgb[0, 2]) * depth / self.K_rgb[0, 0]
-            y_img = (v_norm * frame.shape[0] - self.K_rgb[1, 2]) * depth / self.K_rgb[1, 1]
-            z_img = depth
-            pt_img = np.array([[x_img], [y_img], [z_img]])
-            pred_3d_rgb = pt_img.flatten()
-            # Get marker index from gaze_labels
-            marker_idx = gaze_labels[idx]
-            if marker_idx < 0 or marker_idx >= self.marker_positions_kinect.shape[0]:
-                rospy.logwarn(f"    Invalid marker index {marker_idx} at frame {idx}")
-                continue
-            # Marker position in RGB coordinate system (precomputed)
-            marker_rgb = self.marker_positions_rgb[marker_idx]
-            # Compute error vector and distance in RGB coordinate system
-            error_vec = pred_3d_rgb - marker_rgb
-            error = np.linalg.norm(error_vec)
-            errors.append(error)
-            x_errors.append(error_vec[0])
-            y_errors.append(error_vec[1])
-            z_errors.append(error_vec[2])
-            t3 = time.time()
-            calc_times.append(t3 - t2)
-            # Log all error components and timing for this frame
-            rospy.loginfo(f"    Frame {idx}: error={error:.3f}m (x={error_vec[0]:.3f}, y={error_vec[1]:.3f}, z={error_vec[2]:.3f}), marker={marker_idx}, model_time={t1-t0:.3f}s, calc_time={t3-t2:.3f}s")
+        # Prepare error log file in results directory
+        error_log_path = os.path.join(self.results_dir, f"{user_id}_{session}_frame_errors.txt")
+        with open(error_log_path, "w") as f:
+            # Write header
+            f.write("frame_idx,error,x_error,y_error,z_error,marker_idx,model_time,calc_time\n")
+            for idx, event in enumerate(mouse_events):
+                if event == -1:
+                    continue
+                # Set video to the correct frame
+                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                ret, frame = cap.read()
+                if not ret:
+                    rospy.logwarn(f"    Could not read frame {idx} from {rgb_file}")
+                    continue
+                cap_depth.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                ret_depth, depth_frame = cap_depth.read()
+                if not ret_depth:
+                    rospy.logwarn(f"    Could not read depth frame {idx} from {depth_file}")
+                    depth_frame = None
+                # Align and fill depth map if available
+                if depth_frame is not None:
+                    # Convert to grayscale if needed
+                    if len(depth_frame.shape) == 3:
+                        depth_frame = cv2.cvtColor(depth_frame, cv2.COLOR_BGR2GRAY)
+                    # Align depth to RGB frame
+                    aligned_depth = self.align_depth_to_rgb(
+                        depth_frame,
+                        frame.shape,
+                        [self.K_d[0,0], self.K_d[1,1], self.K_d[0,2], self.K_d[1,2]],
+                        [self.K_rgb[0,0], self.K_rgb[1,1], self.K_rgb[0,2], self.K_rgb[1,2]],
+                        self.R_extr,
+                        self.T_extr
+                    )
+                    # Fill empty pixels in the aligned depth map
+                    aligned_depth = self.fill_empty_pixels(aligned_depth)
+                else:
+                    aligned_depth = None
+                # --- Model (gaze) processing time ---
+                t0 = time.time()
+                gaze_2d = self.get_gaze_from_frame(frame)
+                t1 = time.time()
+                model_times.append(t1 - t0)
+                if gaze_2d is None:
+                    rospy.logwarn(f"    No gaze detected in frame {idx}")
+                    continue
+                u_norm, v_norm = gaze_2d  # normalized [0, 1]
+                # --- Calculation (projection/error) processing time ---
+                t2 = time.time()
+                # Get depth at (u_norm, v_norm) from aligned depth
+                depth = self.get_depth_at_pixel(aligned_depth, u_norm, v_norm) if aligned_depth is not None else None
+                if depth is None:
+                    rospy.logwarn(f"    No depth for frame {idx}, normalized ({u_norm},{v_norm})")
+                    continue
+                # Project to 3D in image coordinate system (RGB)
+                x_img = (u_norm * frame.shape[1] - self.K_rgb[0, 2]) * depth / self.K_rgb[0, 0]
+                y_img = (v_norm * frame.shape[0] - self.K_rgb[1, 2]) * depth / self.K_rgb[1, 1]
+                z_img = depth
+                pt_img = np.array([[x_img], [y_img], [z_img]])
+                pred_3d_rgb = pt_img.flatten()
+                # Get marker index from gaze_labels
+                marker_idx = gaze_labels[idx]
+                if marker_idx < 0 or marker_idx >= self.marker_positions_kinect.shape[0]:
+                    rospy.logwarn(f"    Invalid marker index {marker_idx} at frame {idx}")
+                    continue
+                # Marker position in RGB coordinate system (precomputed)
+                marker_rgb = self.marker_positions_rgb[marker_idx]
+                # Compute error vector and distance in RGB coordinate system
+                error_vec = pred_3d_rgb - marker_rgb
+                error = np.linalg.norm(error_vec)
+                errors.append(error)
+                x_errors.append(error_vec[0])
+                y_errors.append(error_vec[1])
+                z_errors.append(error_vec[2])
+                t3 = time.time()
+                calc_times.append(t3 - t2)
+                # Log all error components and timing for this frame
+                rospy.loginfo(f"    Frame {idx}: error={error:.3f}m (x={error_vec[0]:.3f}, y={error_vec[1]:.3f}, z={error_vec[2]:.3f}), marker={marker_idx}, model_time={t1-t0:.3f}s, calc_time={t3-t2:.3f}s")
+                # Write per-frame error to file
+                f.write(f"{idx},{error:.6f},{error_vec[0]:.6f},{error_vec[1]:.6f},{error_vec[2]:.6f},{marker_idx},{t1-t0:.6f},{t3-t2:.6f}\n")
         cap.release()
         cap_depth.release()
         if errors:
