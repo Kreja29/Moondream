@@ -70,6 +70,11 @@ class GazeDetectionEvaluator:
             [0.0, -1.0,  0.0],
             [0.0,  0.0, -1.0]
         ])
+        self.R_pos_new = np.array([
+            [0.0,  -1.0,  0.0],
+            [-1.0, 0.0,  0.0],
+            [0.0,  0.0, -1.0]
+        ])
 
         # Translation vector
         self.T_pos = np.array([
@@ -97,9 +102,11 @@ class GazeDetectionEvaluator:
         ])
         # Precompute marker positions in RGB coordinate system
         self.marker_positions_rgb = np.array([
-            (self.R_pos @ marker.reshape(3, 1) + self.T_pos).flatten()
+            (self.R_pos_new @ marker.reshape(3, 1) + self.T_pos).flatten()
             for marker in self.marker_positions_kinect
         ])
+        
+        rospy.loginfo(f"Marker positions in RGB coordinates: {self.marker_positions_rgb}") #temp
 
         # Depth intrinsics
         self.K_d = np.array([
@@ -142,7 +149,7 @@ class GazeDetectionEvaluator:
         id_list = self.dataset_helper.get_id_list()
         session_order = ['MT', 'ET_center', 'OM1']
         total_processed = 0
-        for user_id in id_list:
+        for user_id in id_list[1:]:         # 1: is temp
             rospy.loginfo(f"Processing {user_id}")
             for session in session_order:
                 session_path = self.dataset_helper.get_session_path(user_id, session)
@@ -210,10 +217,13 @@ class GazeDetectionEvaluator:
         calc_times = []
         # Prepare error log file in results directory
         error_log_path = os.path.join(self.results_dir, f"{user_id}_{session}_frame_errors.txt")
+        matrix_path = os.path.join(self.results_dir, f"{user_id}_{session}_depth_matrix.txt")       #temp
         with open(error_log_path, "w") as f:
             # Write header
             f.write("frame_idx,error,x_error,y_error,z_error,marker_idx,model_time,calc_time\n")
             for idx, event in enumerate(mouse_events):
+                if idx < 3000:  # Skip first 3000 frames
+                    continue
                 if event == -1:
                     continue
                 # Set video to the correct frame
@@ -229,9 +239,14 @@ class GazeDetectionEvaluator:
                     depth_frame = None
                 # Align and fill depth map if available
                 if depth_frame is not None:
+                    #np.savetxt(matrix_path.replace('.txt', 'RAW.txt'), depth_frame, fmt='%.6f')        # TEMP
+                    # TODO: CHANGE THIS FROM RGB CONVERSION TO BIT SHIFTING
                     # Convert to grayscale if needed
+                    rospy.loginfo(f" depth_frame: {depth_frame.shape} for frame {idx}")
                     if len(depth_frame.shape) == 3:
                         depth_frame = cv2.cvtColor(depth_frame, cv2.COLOR_BGR2GRAY)
+                    rospy.loginfo(f"    Depth frame shape: {depth_frame.shape} for frame {idx}")    # temp
+                    np.savetxt(matrix_path.replace('.txt', 'AFTER_CONVERSION.txt'), depth_frame, fmt='%.6f')    # TEMP
                     # Align depth to RGB frame
                     aligned_depth = self.align_depth_to_rgb(
                         depth_frame,
@@ -241,13 +256,18 @@ class GazeDetectionEvaluator:
                         self.R_extr,
                         self.T_extr
                     )
+                    rospy.loginfo(f"    Aligned depth: {aligned_depth.shape} for frame {idx}")  # temp
                     # Fill empty pixels in the aligned depth map
                     aligned_depth = self.fill_empty_pixels(aligned_depth)
+                    rospy.loginfo(f"    Filled aligned depth: {aligned_depth.shape} for frame {idx}")   #temp
                 else:
                     aligned_depth = None
                 # --- Model (gaze) processing time ---
                 t0 = time.time()
                 gaze_2d = self.get_gaze_from_frame(frame)
+
+                rospy.loginfo(f"    gaze {gaze_2d} for frame {idx}")    #temp
+
                 t1 = time.time()
                 model_times.append(t1 - t0)
                 if gaze_2d is None:
@@ -258,14 +278,18 @@ class GazeDetectionEvaluator:
                 t2 = time.time()
                 # Get depth at (u_norm, v_norm) from aligned depth
                 depth = self.get_depth_at_pixel(aligned_depth, u_norm, v_norm) if aligned_depth is not None else None
+                rospy.loginfo(f"    Depth at ({u_norm},{v_norm}) for frame {idx}: {depth}")   #temp 
                 if depth is None:
                     rospy.logwarn(f"    No depth for frame {idx}, normalized ({u_norm},{v_norm})")
                     continue
                 # Project to 3D in image coordinate system (RGB)
-                x_img = (u_norm * frame.shape[1] - self.K_rgb[0, 2]) * depth / self.K_rgb[0, 0]
-                y_img = (v_norm * frame.shape[0] - self.K_rgb[1, 2]) * depth / self.K_rgb[1, 1]
+                x_img = (int(u_norm * frame.shape[1]) - self.K_rgb[0, 2]) * depth / self.K_rgb[0, 0]
+                y_img = (int(v_norm * frame.shape[0]) - self.K_rgb[1, 2]) * depth / self.K_rgb[1, 1]
                 z_img = depth
                 pt_img = np.array([[x_img], [y_img], [z_img]])
+
+                rospy.loginfo(f"    3D point in image coordinates: {pt_img.flatten()} for frame {idx}")  #temp
+
                 pred_3d_rgb = pt_img.flatten()
                 # Get marker index from gaze_labels
                 marker_idx = gaze_labels[idx]
@@ -451,7 +475,7 @@ class GazeDetectionEvaluator:
         mask = depth_map > 0
 
         if np.count_nonzero(mask) < 100:
-            rospy.logwarn("⚠️ Warning: Too few valid points to interpolate.")
+            rospy.logwarn("Warning: Too few valid points to interpolate.")
             return depth_map
 
         # Get valid pixel locations and their depth values
