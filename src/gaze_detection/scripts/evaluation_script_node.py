@@ -156,7 +156,7 @@ class GazeDetectionEvaluator:
         session_order = ['MT', 'ET_center', 'OM1']
         total_processed = 0
         for user_id in id_list[:]: 
-            if not user_id == 'ManiGaze_ID_04':
+            if not user_id == 'ManiGaze_ID_17':
                 continue
             
             rospy.loginfo(f"Processing {user_id}")
@@ -230,7 +230,7 @@ class GazeDetectionEvaluator:
             # Write header
             f.write("frame_idx,error,x_error,y_error,z_error,marker_idx,model_time,calc_time\n")
             for idx, event in enumerate(mouse_events):
-                if idx < 3000:  # Skip first 3000 frames
+                if idx < 1:  # Skip first 3000 frames
                     continue
                 if event == -1:
                     continue
@@ -277,7 +277,7 @@ class GazeDetectionEvaluator:
                     u_norm, v_norm, depth_m,
                     self.K_rgb, self.K_d, self.R_extr, self.T_extr,
                     rgb_shape=frame.shape,
-                    visualize=True
+                    visualize=False  # Set to True to visualize the 3D points and line
                 ) if depth_m is not None else None
                 rospy.loginfo(f"    3D point in depth camera coordinates: {pred_3d_depth}")  #temp
                 if pred_3d_depth is None:
