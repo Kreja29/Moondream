@@ -272,15 +272,15 @@ class GazeDetectionEvaluator:
                 else:
                     depth_m = None
 
-                # Get 3D point using correspondence method
-                pred_3d_rgb = self.find_3d_point_from_rgb_gaze(
+                # Get 3D point using correspondence method 
+                pred_3d_depth = self.find_3d_point_from_rgb_gaze(
                     u_norm, v_norm, depth_m,
                     self.K_rgb, self.K_d, self.R_extr, self.T_extr,
                     rgb_shape=frame.shape,
                     visualize=True
                 ) if depth_m is not None else None
-                rospy.loginfo(f"    3D point in RGB coordinates: {pred_3d_rgb}")  #temp
-                if pred_3d_rgb is None:
+                rospy.loginfo(f"    3D point in depth camera coordinates: {pred_3d_depth}")  #temp
+                if pred_3d_depth is None:
                     rospy.logwarn(f"    No 3D correspondence for frame {idx}, normalized ({u_norm},{v_norm})")
                     continue
 
@@ -289,11 +289,11 @@ class GazeDetectionEvaluator:
                 if marker_idx < 0 or marker_idx >= self.marker_positions_kinect.shape[0]:
                     rospy.logwarn(f"    Invalid marker index {marker_idx} at frame {idx}")
                     continue
-                # Marker position in RGB coordinate system (precomputed)
-                marker_rgb = self.marker_positions_rgb[marker_idx]
-                rospy.loginfo(f"    Marker {marker_idx} position in RGB coordinates: {marker_rgb}")
-                # Compute error vector and distance in RGB coordinate system
-                error_vec = pred_3d_rgb - marker_rgb
+                # Marker position in depth camera coordinate system (precomputed)
+                marker_camera = self.marker_positions_camera[marker_idx]
+                rospy.loginfo(f"    Marker {marker_idx} position in camera (depth) coordinates: {marker_camera}")
+                # Compute error vector and distance in depth camera coordinate system
+                error_vec = pred_3d_depth - marker_camera
                 error = np.linalg.norm(error_vec)
                 errors.append(error)
                 x_errors.append(error_vec[0])
@@ -551,8 +551,6 @@ class GazeDetectionEvaluator:
         dists = np.linalg.norm(points - proj, axis=1)
         idx = np.argmin(dists)
         closest_point_depth = points[idx]
-        # Transform back to RGB camera frame
-        closest_point_rgb = R @ closest_point_depth + T
         if visualize:
             # Depth points as point cloud
             pcd = o3d.geometry.PointCloud()
@@ -578,7 +576,7 @@ class GazeDetectionEvaluator:
                     marker.paint_uniform_color([1.0, 0.5, 0.0])
                     marker_meshes.append(marker)
             o3d.visualization.draw_geometries([pcd, line_pcd, sphere] + marker_meshes)
-        return closest_point_rgb
+        return closest_point_depth
 
 if __name__ == "__main__":
     try:
