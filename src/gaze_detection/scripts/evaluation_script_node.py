@@ -14,6 +14,7 @@ import traceback
 import torch
 from transformers import AutoModelForCausalLM
 import time
+import open3d as o3d
 
 class DatasetHelper:
     def __init__(self, dataset_path):
@@ -499,11 +500,14 @@ class GazeDetectionEvaluator:
         depth_m = depth_16bit.astype(np.float32) / 1000.0  # convert to meters
         return depth_m
 
-    def find_3d_point_from_rgb_gaze(self, u_norm, v_norm, depth_frame, K_rgb, K_d, R_extr, T_extr, rgb_shape):
+    def find_3d_point_from_rgb_gaze(self, u_norm, v_norm, depth_frame, K_rgb, K_d, R_extr, T_extr, rgb_shape, visualize=False, marker_positions_rgb=None):
         """
         Given normalized (u,v) in RGB image, find the closest 3D point in the depth camera frame to the backprojected gaze ray.
+        Optionally visualize the 3D depth points, the line, and the markers using Open3D.
         Returns the 3D point in RGB camera coordinates, or None if not found.
         rgb_shape: tuple (height, width) of the RGB frame (must be provided)
+        visualize: if True, plot the 3D points, line, and markers
+        marker_positions_rgb: (optional) array of marker positions in RGB camera coordinates
         """
         if depth_frame is None:
             return None
@@ -520,7 +524,6 @@ class GazeDetectionEvaluator:
         T = T_extr.flatten()
         p0_depth = R.T @ (p0_rgb - T)
         p1_depth = R.T @ (p1_rgb - T)
-        # Line equation in depth camera frame: p(t) = p0_depth + t * (p1_depth - p0_depth)
         # Backproject all valid depth pixels to 3D in depth camera frame
         fx_d, fy_d, cx_d, cy_d = K_d[0,0], K_d[1,1], K_d[0,2], K_d[1,2]
         i, j = np.indices((h_d, w_d))
@@ -543,6 +546,31 @@ class GazeDetectionEvaluator:
         closest_point_depth = points[idx]
         # Transform back to RGB camera frame
         closest_point_rgb = R @ closest_point_depth + T
+        if visualize:
+            # Depth points as point cloud
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(points[::100])
+            pcd.paint_uniform_color([0.2, 0.2, 1.0])
+            # Gaze line as line set
+            t_line = np.linspace(-0.1, 2, 100)
+            line_pts = p0_depth[None,:] + t_line[:,None] * line_vec[None,:]
+            line_pcd = o3d.geometry.PointCloud()
+            line_pcd.points = o3d.utility.Vector3dVector(line_pts)
+            line_pcd.paint_uniform_color([1.0, 0.0, 0.0])
+            # Closest point as a small sphere
+            sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+            sphere.translate(closest_point_depth)
+            sphere.paint_uniform_color([0.0, 1.0, 0.0])
+            # Markers as spheres or points
+            marker_meshes = []
+            if marker_positions_rgb is not None:
+                for m in marker_positions_rgb:
+                    m_depth = R.T @ (m - T)
+                    marker = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+                    marker.translate(m_depth)
+                    marker.paint_uniform_color([1.0, 0.5, 0.0])
+                    marker_meshes.append(marker)
+            o3d.visualization.draw_geometries([pcd, line_pcd, sphere] + marker_meshes)
         return closest_point_rgb
 
 if __name__ == "__main__":
