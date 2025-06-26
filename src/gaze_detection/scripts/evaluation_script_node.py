@@ -228,6 +228,7 @@ class GazeDetectionEvaluator:
                     continue
                 if event == -1:
                     continue
+                rospy.loginfo(f"Processing frame {idx} for {user_id} {session}")
                 # Set video to the correct frame
                 cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
                 ret, frame = cap.read()
@@ -251,27 +252,27 @@ class GazeDetectionEvaluator:
                     rospy.logwarn(f"    No gaze detected in frame {idx}")
                     continue
 
-                rospy.loginfo(f"    gaze {gaze_2d} for frame {idx}")    #temp
+                rospy.loginfo(f"    gaze {gaze_2d}")
 
                 u_norm, v_norm = gaze_2d  # normalized [0, 1]
+
                 # --- Calculation (projection/error) processing time ---
                 t2 = time.time()
 
-                # Align and fill depth map if available
+                # Reconstruct a correct depth frame
                 if depth_frame is not None:
                     depth_m = self.reconstruct_depth_16bit(depth_frame)
-                    rospy.loginfo(f"Depth min/max: {depth_m.min()} / {depth_m.max()}, dtype={depth_m.dtype}") #temp
-                    t_bitshift = time.time()
+                    rospy.loginfo(f"    Depth min/max: {depth_m.min()} / {depth_m.max()}, dtype={depth_m.dtype}") #temp
                 else:
                     depth_m = None
 
-                # Get 3D point using new correspondence method
+                # Get 3D point using correspondence method
                 pred_3d_rgb = self.find_3d_point_from_rgb_gaze(
                     u_norm, v_norm, depth_m,
                     self.K_rgb, self.K_d, self.R_extr, self.T_extr,
                     rgb_shape=frame.shape
                 ) if depth_m is not None else None
-                rospy.loginfo(f"    3D point in image coordinates: {pred_3d_rgb} for frame {idx}")  #temp
+                rospy.loginfo(f"    3D point in RGB coordinates: {pred_3d_rgb}")  #temp
                 if pred_3d_rgb is None:
                     rospy.logwarn(f"    No 3D correspondence for frame {idx}, normalized ({u_norm},{v_norm})")
                     continue
@@ -283,6 +284,7 @@ class GazeDetectionEvaluator:
                     continue
                 # Marker position in RGB coordinate system (precomputed)
                 marker_rgb = self.marker_positions_rgb[marker_idx]
+                rospy.loginfo(f"    Marker {marker_idx} position in RGB coordinates: {marker_rgb}")
                 # Compute error vector and distance in RGB coordinate system
                 error_vec = pred_3d_rgb - marker_rgb
                 error = np.linalg.norm(error_vec)
@@ -292,7 +294,7 @@ class GazeDetectionEvaluator:
                 z_errors.append(error_vec[2])
                 t3 = time.time()
                 calc_times.append(t3 - t2)
-                rospy.loginfo(f"    Time Bitshift: {t_bitshift - t2:.3f}s, total calc: {t3 - t2:.3f}s")
+
                 # Log all error components and timing for this frame
                 rospy.loginfo(f"    Frame {idx}: error={error:.3f}m (x={error_vec[0]:.3f}, y={error_vec[1]:.3f}, z={error_vec[2]:.3f}), marker={marker_idx}, model_time={t1-t0:.3f}s, calc_time={t3-t2:.3f}s")
                 # Write per-frame error to file
