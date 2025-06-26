@@ -106,6 +106,11 @@ class GazeDetectionEvaluator:
             (self.R_pos_new @ marker.reshape(3, 1) + self.T_pos).flatten()
             for marker in self.marker_positions_kinect
         ])
+
+        self.marker_positions_camera = np.array([
+            (self.R_pos @ marker.reshape(3, 1) + self.T_pos).flatten()
+            for marker in self.marker_positions_kinect
+        ])
         
         rospy.loginfo(f"Marker positions in RGB coordinates: {self.marker_positions_rgb}") #temp
 
@@ -271,7 +276,8 @@ class GazeDetectionEvaluator:
                 pred_3d_rgb = self.find_3d_point_from_rgb_gaze(
                     u_norm, v_norm, depth_m,
                     self.K_rgb, self.K_d, self.R_extr, self.T_extr,
-                    rgb_shape=frame.shape
+                    rgb_shape=frame.shape,
+                    visualize=True
                 ) if depth_m is not None else None
                 rospy.loginfo(f"    3D point in RGB coordinates: {pred_3d_rgb}")  #temp
                 if pred_3d_rgb is None:
@@ -502,14 +508,13 @@ class GazeDetectionEvaluator:
         depth_m = depth_16bit.astype(np.float32) / 1000.0  # convert to meters
         return depth_m
 
-    def find_3d_point_from_rgb_gaze(self, u_norm, v_norm, depth_frame, K_rgb, K_d, R_extr, T_extr, rgb_shape, visualize=False, marker_positions_rgb=None):
+    def find_3d_point_from_rgb_gaze(self, u_norm, v_norm, depth_frame, K_rgb, K_d, R_extr, T_extr, rgb_shape, visualize=False):
         """
         Given normalized (u,v) in RGB image, find the closest 3D point in the depth camera frame to the backprojected gaze ray.
         Optionally visualize the 3D depth points, the line, and the markers using Open3D.
         Returns the 3D point in RGB camera coordinates, or None if not found.
         rgb_shape: tuple (height, width) of the RGB frame (must be provided)
         visualize: if True, plot the 3D points, line, and markers
-        marker_positions_rgb: (optional) array of marker positions in RGB camera coordinates
         """
         if depth_frame is None:
             return None
@@ -565,8 +570,8 @@ class GazeDetectionEvaluator:
             sphere.paint_uniform_color([0.0, 1.0, 0.0])
             # Markers as spheres or points
             marker_meshes = []
-            if marker_positions_rgb is not None:
-                for m in marker_positions_rgb:
+            if self.marker_positions_camera is not None:
+                for m in self.marker_positions_camera:
                     m_depth = R.T @ (m - T)
                     marker = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
                     marker.translate(m_depth)
