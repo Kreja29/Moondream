@@ -259,50 +259,23 @@ class GazeDetectionEvaluator:
 
                 # Align and fill depth map if available
                 if depth_frame is not None:
-                    low_byte = depth_frame[:,:,0]
-                    high_byte = depth_frame[:,:,1]
-                    # Reconstruct 16-bit depth values
-                    depth_16bit = (high_byte.astype(np.uint16) << 8) | low_byte.astype(np.uint16)
-                    rospy.loginfo(f"Depth16 min/max: {depth_16bit.min()} / {depth_16bit.max()}, dtype={depth_16bit.dtype}") #temp
-
-                    # Convert to meters
-                    depth_m = depth_16bit.astype(np.float32) / 1000.0  # now in meters
+                    depth_m = self.reconstruct_depth_16bit(depth_frame)
+                    rospy.loginfo(f"Depth min/max: {depth_m.min()} / {depth_m.max()}, dtype={depth_m.dtype}") #temp
                     t_bitshift = time.time()
-                    # Align depth to RGB frame
-                    aligned_depth = self.align_depth_to_rgb(
-                        depth_m,
-                        frame.shape,
-                        [self.K_d[0,0], self.K_d[1,1], self.K_d[0,2], self.K_d[1,2]],
-                        [self.K_rgb[0,0], self.K_rgb[1,1], self.K_rgb[0,2], self.K_rgb[1,2]],
-                        self.R_extr,
-                        self.T_extr
-                    )
-                    t_aligned_depth = time.time()
-                    rospy.loginfo(f"    Aligned depth: {aligned_depth.shape} for frame {idx}")  # temp
-                    # Fill empty pixels in the aligned depth map
-                    aligned_depth = self.fill_empty_pixels(aligned_depth)
-                    t_fill_empty_pixels = time.time()
-                    rospy.loginfo(f"    Filled aligned depth: {aligned_depth.shape} for frame {idx}")   #temp
                 else:
-                    aligned_depth = None
+                    depth_m = None
 
-
-                # Get depth at (u_norm, v_norm) from aligned depth
-                depth = self.get_depth_at_pixel(aligned_depth, u_norm, v_norm) if aligned_depth is not None else None
-                t_get_depth_at_pixel = time.time()
-                rospy.loginfo(f"    Depth at ({u_norm},{v_norm}) for frame {idx}: {depth}")   #temp 
-                if depth is None:
-                    rospy.logwarn(f"    No depth for frame {idx}, normalized ({u_norm},{v_norm})")
+                # Get 3D point using new correspondence method
+                pred_3d_rgb = self.find_3d_point_from_rgb_gaze(
+                    u_norm, v_norm, depth_m,
+                    self.K_rgb, self.K_d, self.R_extr, self.T_extr,
+                    rgb_shape=frame.shape
+                ) if depth_m is not None else None
+                rospy.loginfo(f"    3D point in image coordinates: {pred_3d_rgb} for frame {idx}")  #temp
+                if pred_3d_rgb is None:
+                    rospy.logwarn(f"    No 3D correspondence for frame {idx}, normalized ({u_norm},{v_norm})")
                     continue
-                # Project to 3D in image coordinate system (RGB)
-                x_img = (int(u_norm * frame.shape[1]) - self.K_rgb[0, 2]) * depth / self.K_rgb[0, 0]
-                y_img = (int(v_norm * frame.shape[0]) - self.K_rgb[1, 2]) * depth / self.K_rgb[1, 1]
-                z_img = depth
-                pt_img = np.array([[x_img], [y_img], [z_img]])
 
-                rospy.loginfo(f"    3D point in image coordinates: {pt_img.flatten()} for frame {idx}")  #temp
-
-                pred_3d_rgb = pt_img.flatten()
                 # Get marker index from gaze_labels
                 marker_idx = gaze_labels[idx]
                 if marker_idx < 0 or marker_idx >= self.marker_positions_kinect.shape[0]:
@@ -319,7 +292,7 @@ class GazeDetectionEvaluator:
                 z_errors.append(error_vec[2])
                 t3 = time.time()
                 calc_times.append(t3 - t2)
-                rospy.loginfo(f"    Time Bitshift: {t_bitshift - t2:.3f}s, aligned_depth: {t_aligned_depth - t_bitshift:.3f}s, fill_empty_pixels: {t_fill_empty_pixels - t_aligned_depth:.3f}s, get_depth_at_pixel: {t_get_depth_at_pixel - t_fill_empty_pixels:.3f}s, total calc: {t3 - t2:.3f}s")
+                rospy.loginfo(f"    Time Bitshift: {t_bitshift - t2:.3f}s, total calc: {t3 - t2:.3f}s")
                 # Log all error components and timing for this frame
                 rospy.loginfo(f"    Frame {idx}: error={error:.3f}m (x={error_vec[0]:.3f}, y={error_vec[1]:.3f}, z={error_vec[2]:.3f}), marker={marker_idx}, model_time={t1-t0:.3f}s, calc_time={t3-t2:.3f}s")
                 # Write per-frame error to file
@@ -511,6 +484,66 @@ class GazeDetectionEvaluator:
 
         return interpolated.reshape((h, w)).astype(depth_map.dtype)
 
+    @staticmethod
+    def reconstruct_depth_16bit(depth_frame: np.ndarray) -> np.ndarray:
+        """
+        Reconstruct 16-bit depth values from an 8-bit 3-channel depth frame and convert to meters.
+        Assumes depth_frame is an 8-bit 3-channel image where:
+        - channel 0: low byte
+        - channel 1: high byte
+        Returns a 2D np.ndarray of dtype np.float32, in meters.
+        """
+        low_byte = depth_frame[:, :, 0]
+        high_byte = depth_frame[:, :, 1]
+        depth_16bit = (high_byte.astype(np.uint16) << 8) | low_byte.astype(np.uint16)
+        depth_m = depth_16bit.astype(np.float32) / 1000.0  # convert to meters
+        return depth_m
+
+    def find_3d_point_from_rgb_gaze(self, u_norm, v_norm, depth_frame, K_rgb, K_d, R_extr, T_extr, rgb_shape):
+        """
+        Given normalized (u,v) in RGB image, find the closest 3D point in the depth camera frame to the backprojected gaze ray.
+        Returns the 3D point in RGB camera coordinates, or None if not found.
+        rgb_shape: tuple (height, width) of the RGB frame (must be provided)
+        """
+        if depth_frame is None:
+            return None
+        h_d, w_d = depth_frame.shape[:2]
+        h_rgb, w_rgb = rgb_shape[:2]
+        u = u_norm * w_rgb
+        v = v_norm * h_rgb
+        fx_rgb, fy_rgb, cx_rgb, cy_rgb = K_rgb[0,0], K_rgb[1,1], K_rgb[0,2], K_rgb[1,2]
+        # Two points along the ray in RGB camera frame (z=0 and z=1)
+        p0_rgb = np.array([(u - cx_rgb) / fx_rgb * 0, (v - cy_rgb) / fy_rgb * 0, 0])
+        p1_rgb = np.array([(u - cx_rgb) / fx_rgb * 1, (v - cy_rgb) / fy_rgb * 1, 1])
+        # Transform to depth camera frame
+        R = R_extr
+        T = T_extr.flatten()
+        p0_depth = R.T @ (p0_rgb - T)
+        p1_depth = R.T @ (p1_rgb - T)
+        # Line equation in depth camera frame: p(t) = p0_depth + t * (p1_depth - p0_depth)
+        # Backproject all valid depth pixels to 3D in depth camera frame
+        fx_d, fy_d, cx_d, cy_d = K_d[0,0], K_d[1,1], K_d[0,2], K_d[1,2]
+        i, j = np.indices((h_d, w_d))
+        z = depth_frame.astype(np.float32)
+        x = (j - cx_d) * z / fx_d
+        y = (i - cy_d) * z / fy_d
+        points = np.stack((x, y, z), axis=-1).reshape(-1, 3)
+        valid = (z > 0).reshape(-1)
+        points = points[valid]
+        if points.shape[0] == 0:
+            return None
+        # Find closest point to the line
+        line_vec = p1_depth - p0_depth
+        line_vec /= np.linalg.norm(line_vec)
+        vecs = points - p0_depth
+        t = np.dot(vecs, line_vec)
+        proj = p0_depth + np.outer(t, line_vec)
+        dists = np.linalg.norm(points - proj, axis=1)
+        idx = np.argmin(dists)
+        closest_point_depth = points[idx]
+        # Transform back to RGB camera frame
+        closest_point_rgb = R @ closest_point_depth + T
+        return closest_point_rgb
 
 if __name__ == "__main__":
     try:
