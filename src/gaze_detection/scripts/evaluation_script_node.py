@@ -149,7 +149,10 @@ class GazeDetectionEvaluator:
         id_list = self.dataset_helper.get_id_list()
         session_order = ['MT', 'ET_center', 'OM1']
         total_processed = 0
-        for user_id in id_list[1:]:         # 1: is temp
+        for user_id in id_list[:]: 
+            if not user_id == 'ManiGaze_ID_04':
+                continue
+            
             rospy.loginfo(f"Processing {user_id}")
             for session in session_order:
                 session_path = self.dataset_helper.get_session_path(user_id, session)
@@ -217,7 +220,6 @@ class GazeDetectionEvaluator:
         calc_times = []
         # Prepare error log file in results directory
         error_log_path = os.path.join(self.results_dir, f"{user_id}_{session}_frame_errors.txt")
-        matrix_path = os.path.join(self.results_dir, f"{user_id}_{session}_depth_matrix.txt")       #temp
         with open(error_log_path, "w") as f:
             # Write header
             f.write("frame_idx,error,x_error,y_error,z_error,marker_idx,model_time,calc_time\n")
@@ -236,48 +238,58 @@ class GazeDetectionEvaluator:
                 ret_depth, depth_frame = cap_depth.read()
                 if not ret_depth:
                     rospy.logwarn(f"    Could not read depth frame {idx} from {depth_file}")
-                    depth_frame = None
-                # Align and fill depth map if available
-                if depth_frame is not None:
-                    #np.savetxt(matrix_path.replace('.txt', 'RAW.txt'), depth_frame, fmt='%.6f')        # TEMP
-                    # TODO: CHANGE THIS FROM RGB CONVERSION TO BIT SHIFTING
-                    # Convert to grayscale if needed
-                    rospy.loginfo(f" depth_frame: {depth_frame.shape} for frame {idx}")
-                    if len(depth_frame.shape) == 3:
-                        depth_frame = cv2.cvtColor(depth_frame, cv2.COLOR_BGR2GRAY)
-                    rospy.loginfo(f"    Depth frame shape: {depth_frame.shape} for frame {idx}")    # temp
-                    np.savetxt(matrix_path.replace('.txt', 'AFTER_CONVERSION.txt'), depth_frame, fmt='%.6f')    # TEMP
-                    # Align depth to RGB frame
-                    aligned_depth = self.align_depth_to_rgb(
-                        depth_frame,
-                        frame.shape,
-                        [self.K_d[0,0], self.K_d[1,1], self.K_d[0,2], self.K_d[1,2]],
-                        [self.K_rgb[0,0], self.K_rgb[1,1], self.K_rgb[0,2], self.K_rgb[1,2]],
-                        self.R_extr,
-                        self.T_extr
-                    )
-                    rospy.loginfo(f"    Aligned depth: {aligned_depth.shape} for frame {idx}")  # temp
-                    # Fill empty pixels in the aligned depth map
-                    aligned_depth = self.fill_empty_pixels(aligned_depth)
-                    rospy.loginfo(f"    Filled aligned depth: {aligned_depth.shape} for frame {idx}")   #temp
-                else:
-                    aligned_depth = None
+                    continue
+
                 # --- Model (gaze) processing time ---
                 t0 = time.time()
-                gaze_2d = self.get_gaze_from_frame(frame)
 
-                rospy.loginfo(f"    gaze {gaze_2d} for frame {idx}")    #temp
+                gaze_2d = self.get_gaze_from_frame(frame)
 
                 t1 = time.time()
                 model_times.append(t1 - t0)
                 if gaze_2d is None:
                     rospy.logwarn(f"    No gaze detected in frame {idx}")
                     continue
+
+                rospy.loginfo(f"    gaze {gaze_2d} for frame {idx}")    #temp
+
                 u_norm, v_norm = gaze_2d  # normalized [0, 1]
                 # --- Calculation (projection/error) processing time ---
                 t2 = time.time()
+
+                # Align and fill depth map if available
+                if depth_frame is not None:
+                    low_byte = depth_frame[:,:,0]
+                    high_byte = depth_frame[:,:,1]
+                    # Reconstruct 16-bit depth values
+                    depth_16bit = (high_byte.astype(np.uint16) << 8) | low_byte.astype(np.uint16)
+                    rospy.loginfo(f"Depth16 min/max: {depth_16bit.min()} / {depth_16bit.max()}, dtype={depth_16bit.dtype}") #temp
+
+                    # Convert to meters
+                    depth_m = depth_16bit.astype(np.float32) / 1000.0  # now in meters
+                    t_bitshift = time.time()
+                    # Align depth to RGB frame
+                    aligned_depth = self.align_depth_to_rgb(
+                        depth_m,
+                        frame.shape,
+                        [self.K_d[0,0], self.K_d[1,1], self.K_d[0,2], self.K_d[1,2]],
+                        [self.K_rgb[0,0], self.K_rgb[1,1], self.K_rgb[0,2], self.K_rgb[1,2]],
+                        self.R_extr,
+                        self.T_extr
+                    )
+                    t_aligned_depth = time.time()
+                    rospy.loginfo(f"    Aligned depth: {aligned_depth.shape} for frame {idx}")  # temp
+                    # Fill empty pixels in the aligned depth map
+                    aligned_depth = self.fill_empty_pixels(aligned_depth)
+                    t_fill_empty_pixels = time.time()
+                    rospy.loginfo(f"    Filled aligned depth: {aligned_depth.shape} for frame {idx}")   #temp
+                else:
+                    aligned_depth = None
+
+
                 # Get depth at (u_norm, v_norm) from aligned depth
                 depth = self.get_depth_at_pixel(aligned_depth, u_norm, v_norm) if aligned_depth is not None else None
+                t_get_depth_at_pixel = time.time()
                 rospy.loginfo(f"    Depth at ({u_norm},{v_norm}) for frame {idx}: {depth}")   #temp 
                 if depth is None:
                     rospy.logwarn(f"    No depth for frame {idx}, normalized ({u_norm},{v_norm})")
@@ -307,6 +319,7 @@ class GazeDetectionEvaluator:
                 z_errors.append(error_vec[2])
                 t3 = time.time()
                 calc_times.append(t3 - t2)
+                rospy.loginfo(f"    Time Bitshift: {t_bitshift - t2:.3f}s, aligned_depth: {t_aligned_depth - t_bitshift:.3f}s, fill_empty_pixels: {t_fill_empty_pixels - t_aligned_depth:.3f}s, get_depth_at_pixel: {t_get_depth_at_pixel - t_fill_empty_pixels:.3f}s, total calc: {t3 - t2:.3f}s")
                 # Log all error components and timing for this frame
                 rospy.loginfo(f"    Frame {idx}: error={error:.3f}m (x={error_vec[0]:.3f}, y={error_vec[1]:.3f}, z={error_vec[2]:.3f}), marker={marker_idx}, model_time={t1-t0:.3f}s, calc_time={t3-t2:.3f}s")
                 # Write per-frame error to file
