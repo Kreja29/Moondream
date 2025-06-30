@@ -224,6 +224,8 @@ class GazeDetectionEvaluator:
         z_errors = []
         model_times = []
         calc_times = []
+        frames_read_count = 0
+        gaze_detected_count = 0
         # Prepare error log file in results directory
         error_log_path = os.path.join(self.results_dir, f"{user_id}_{session}_frame_errors.txt")
         with open(error_log_path, "w") as f:
@@ -246,6 +248,8 @@ class GazeDetectionEvaluator:
                 if not ret_depth:
                     rospy.logwarn(f"    Could not read depth frame {idx} from {depth_file}")
                     continue
+                
+                frames_read_count += 1
 
                 # --- Model (gaze) processing time ---
                 t0 = time.time()
@@ -253,10 +257,13 @@ class GazeDetectionEvaluator:
                 gaze_2d = self.get_gaze_from_frame(frame)
 
                 t1 = time.time()
-                model_times.append(t1 - t0)
+                
                 if gaze_2d is None:
                     rospy.logwarn(f"    No gaze detected in frame {idx}")
                     continue
+                
+                gaze_detected_count += 1
+                model_times.append(t1 - t0)
 
                 rospy.loginfo(f"    gaze {gaze_2d}")
 
@@ -308,6 +315,9 @@ class GazeDetectionEvaluator:
                 f.write(f"{idx},{error:.6f},{error_vec[0]:.6f},{error_vec[1]:.6f},{error_vec[2]:.6f},{marker_idx},{t1-t0:.6f},{t3-t2:.6f}\n")
         cap.release()
         cap_depth.release()
+
+        gaze_detection_rate = (gaze_detected_count / frames_read_count * 100) if frames_read_count > 0 else 0
+
         if errors:
             # Compute and log mean and std for all error components and timings
             mean_error = np.mean(errors)
@@ -322,11 +332,39 @@ class GazeDetectionEvaluator:
             std_model_time = np.std(model_times)
             mean_calc_time = np.mean(calc_times)
             std_calc_time = np.std(calc_times)
+            rospy.loginfo(f"    Gaze detection rate: {gaze_detection_rate:.2f}% ({gaze_detected_count}/{frames_read_count})")
             rospy.loginfo(f"    MT session mean error: {mean_error:.3f}±{std_error:.3f}m over {len(errors)} frames")
             rospy.loginfo(f"    Mean x error: {mean_x:.3f}±{std_x:.3f}m, y error: {mean_y:.3f}±{std_y:.3f}m, z error: {mean_z:.3f}±{std_z:.3f}m")
             rospy.loginfo(f"    Model time: {mean_model_time:.3f}±{std_model_time:.3f}s, Calc time: {mean_calc_time:.3f}±{std_calc_time:.3f}s")
+
+            summary_log_path = os.path.join(self.results_dir, f"{user_id}_{session}_summary.txt")
+            with open(summary_log_path, "w") as f:
+                summary_line = (
+                    f"Summary: "
+                    f"GazeDetectionRate={gaze_detection_rate:.2f}%, "
+                    f"FramesWithGaze={gaze_detected_count}, "
+                    f"FramesProcessed={frames_read_count}, "
+                    f"MeanError={mean_error:.6f}, StdError={std_error:.6f}, "
+                    f"MeanXError={mean_x:.6f}, StdXError={std_x:.6f}, "
+                    f"MeanYError={mean_y:.6f}, StdYError={std_y:.6f}, "
+                    f"MeanZError={mean_z:.6f}, StdZError={std_z:.6f}, "
+                    f"MeanModelTime={mean_model_time:.6f}, StdModelTime={std_model_time:.6f}, "
+                    f"MeanCalcTime={mean_calc_time:.6f}, StdCalcTime={std_calc_time:.6f}\n"
+                )
+                f.write(summary_line)
         else:
             rospy.loginfo(f"    No valid frames processed for MT session")
+            rospy.loginfo(f"    Gaze detection rate: {gaze_detection_rate:.2f}% ({gaze_detected_count}/{frames_read_count})")
+            summary_log_path = os.path.join(self.results_dir, f"{user_id}_{session}_summary.txt")
+            with open(summary_log_path, "w") as f:
+                summary_line = (
+                    f"Summary: "
+                    f"GazeDetectionRate={gaze_detection_rate:.2f}%, "
+                    f"FramesWithGaze={gaze_detected_count}, "
+                    f"FramesProcessed={frames_read_count}, "
+                    f"No frames with successful 3D correspondence.\n"
+                )
+                f.write(summary_line)
 
     def process_om_session(self, user_id: str, session: str):
         rgb_file, depth_file = self.dataset_helper.get_video_files(user_id, session)
