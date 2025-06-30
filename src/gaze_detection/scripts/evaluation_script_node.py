@@ -113,6 +113,7 @@ class GazeDetectionEvaluator:
         ])
         
         rospy.loginfo(f"Marker positions in RGB coordinates: {self.marker_positions_rgb}") #temp
+        rospy.loginfo(f"Marker positions in CAMERA coordinates: {self.marker_positions_camera}") #temp
 
         # Depth intrinsics
         self.K_d = np.array([

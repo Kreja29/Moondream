@@ -131,7 +131,39 @@ RUN source /opt/venv_py39/bin/activate && \
         huggingface-hub==0.24.0 \
         gradio==4.38.1 \
         open3d \
-        scipy && \
+        scipy \
+        albumentations==1.3.1 \
+        certifi==2023.7.22 \
+        charset-normalizer==3.3.1 \
+        coloredlogs==15.0.1 \
+        cmake==3.25.0 \
+        cython==3.0.4 \
+        easydict==1.11 \
+        flatbuffers==23.5.26 \
+        humanfriendly==10.0 \
+        idna==3.4 \
+        imageio==2.31.6 \
+        insightface==0.7.3 \
+        joblib==1.3.2 \
+        lazy-loader==0.3 \
+        lit==15.0.7 \
+        mpmath==1.3.0 \
+        networkx==3.1 \
+        onnx==1.14.1 \
+        onnxruntime-gpu==1.15.0 \
+        opencv-python-headless==4.8.1.78 \
+        prettytable==3.9.0 \
+        pywavelets==1.4.1 \
+        pyyaml==6.0.1 \
+        qudida==0.0.4 \
+        scikit-image==0.21.0 \
+        scikit-learn==1.3.2 \
+        sympy==1.12 \
+        threadpoolctl==3.2.0 \
+        tifffile==2023.7.10 \
+        triton==2.0.0 \
+        urllib3==2.0.7 \
+        wcwidth==0.2.8 && \
     pip install torch==2.1.2+cu118 --index-url https://download.pytorch.org/whl/cu118 && \
     pip install datasets==3.1.0 editdistance==0.8.1 rospkg catkin_pkg netifaces && \
     deactivate
@@ -159,6 +191,9 @@ WORKDIR /workspace/src
 RUN git clone https://github.com/Kreja29/freenect_stack.git
 RUN git clone https://github.com/eric-wieser/ros_numpy.git
 
+
+WORKDIR /workspace/src
+RUN git clone https://github.com/eververas/3DGazeNet.git
 
 
 # First catkin config and build
