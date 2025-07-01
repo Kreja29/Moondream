@@ -15,6 +15,9 @@ import torch
 from transformers import AutoModelForCausalLM
 import time
 import open3d as o3d
+from demo.models.face_detector import FaceDetectorIF
+from demo.models.gaze_predictor import GazePredictorHandler
+from demo.utils import config as cfg
 
 class DatasetHelper:
     def __init__(self, dataset_path):
@@ -625,3 +628,73 @@ if __name__ == "__main__":
         rospy.spin()
     except rospy.ROSInterruptException:
         pass
+
+
+class GazeEstimator:
+    def _init_(self, 
+                 model_ckpt_path=None, 
+                 device=None, 
+                 det_thresh=0.5, 
+                 det_size=224):
+        """
+        model_ckpt_path: path to the 3DGazeNet checkpoint (.pth)
+        device: 'cuda:0' or 'cpu' (auto if None)
+        det_thresh: face detection threshold
+        det_size: face detection input size
+        """
+        # Device selection
+        if device is None:
+            device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+        self.device = device
+
+        # Set up config
+        self.cfg = cfg
+        self.cfg.PREDICTOR.NUM_LAYERS = 18
+        self.cfg.PREDICTOR.BACKBONE_TYPE = 'resnet'
+        if model_ckpt_path is None:
+            # Default path (update as needed)
+            base = os.path.dirname(os.path.abspath(_file_))
+            model_ckpt_path = os.path.join(base, 'data', 'checkpoints', 'res18_x128_all_vfhq_vert.pth')
+        self.cfg.PREDICTOR.PRETRAINED = model_ckpt_path
+        self.cfg.PREDICTOR.MODE = 'vertex'
+        self.cfg.PREDICTOR.IMAGE_SIZE = [128, 128]
+        self.cfg.PREDICTOR.NUM_POINTS_OUT_EYES = 962
+        self.cfg.PREDICTOR.NUM_POINTS_OUT_FACE = 68
+        self.cfg.DEVICE = device
+
+        # Load face detector and gaze predictor
+        self.face_detector = FaceDetectorIF(det_thresh, det_size)
+        self.gaze_predictor = GazePredictorHandler(self.cfg.PREDICTOR, device=device)
+
+    def predict(self, frame_bgr):
+        """
+        frame_bgr: np.ndarray, BGR image as from OpenCV
+        Returns: gaze direction vector (np.ndarray, shape (3,)), or None if no face detected
+        """
+        # Convert BGR to RGB for detector
+        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        # Detect faces and 5-point landmarks
+        bboxs, kpts, faces = self.face_detector.run(frame_rgb)
+        if kpts is None or len(kpts) == 0:
+            return None
+        # Use the largest face (by area)
+        areas = [np.prod(bbox[2:4] - bbox[0:2]) for bbox in bboxs]
+        idx = int(np.argmax(areas))
+        kpt5 = kpts[idx]
+        # Run gaze predictor
+        with torch.no_grad():
+            result = self.gaze_predictor(frame_rgb, kpt5, undo_roll=True)
+        # Return the combined gaze vector
+        return result.get('gaze_combined', None)
+
+if _name_ == '_main_':
+    # Example usage
+    import sys
+    if len(sys.argv) < 2:
+        print('Usage: python single_image_inference.py <image_path>')
+        exit(1)
+    image_path = sys.argv[1]
+    frame = cv2.imread(image_path)
+    estimator = GazeEstimator()
+    gaze_vec = estimator.predict(frame)
+    print('Gaze direction vector:', gaze_vec)
