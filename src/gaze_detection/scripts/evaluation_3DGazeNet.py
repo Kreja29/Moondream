@@ -17,6 +17,7 @@ import time
 import open3d as o3d
 
 sys.path.append('/workspace/src/3DGazeNet')  # Add project root to sys.path
+sys.path.append('/workspace/src/3DGazeNet/demo')  # Add demo directory to sys.path
 
 from demo.models.face_detector import FaceDetectorIF
 from demo.models.gaze_predictor import GazePredictorHandler
@@ -81,6 +82,7 @@ class GazeEstimator:
         if model_ckpt_path is None:
             base = os.path.dirname(os.path.abspath(__file__))
             model_ckpt_path = os.path.join(base, 'data', 'checkpoints', 'res18_x128_all_vfhq_vert.pth')
+            model_ckpt_path = ('/workspace/src/3DGazeNet/data/3dgazenet/models/singleview/vertex/ALL/test_0/checkpoint.pth')
         self.cfg.PREDICTOR.PRETRAINED = model_ckpt_path
         self.cfg.PREDICTOR.MODE = 'vertex'
         self.cfg.PREDICTOR.IMAGE_SIZE = [128, 128]
@@ -99,6 +101,7 @@ class GazeEstimator:
         kpt5 = kpts[idx]
         with torch.no_grad():
             result = self.gaze_predictor(frame_rgb, kpt5, undo_roll=True)
+        return result
         return result.get('gaze_combined', None)
 
 class GazeDetectionEvaluator:
@@ -186,11 +189,6 @@ class GazeDetectionEvaluator:
         self.T_extr = np.array([[0.0510585959051953], [-0.0014484138682882], [0.0117507879232922]])
 
         # Initialize model
-        # self.model = self.initialize_model()
-        # if self.model is None:
-        #     rospy.logerr("Failed to initialize Moondream 2 model. Exiting.")
-        #     sys.exit(1)
-        # Use 3DGazeNet instead
         self.model = GazeEstimator()
 
         # Ensure results directory exists

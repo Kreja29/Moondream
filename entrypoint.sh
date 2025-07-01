@@ -8,7 +8,7 @@ source /detect_gpu.sh
 source /opt/ros/noetic/setup.bash
 source /workspace/devel/setup.bash
 
-export PYTHONPATH=$PYTHONPATH:/workspace/src/3DGazeNet/src:/workspace/src/gaze_detection/scripts
+export PYTHONPATH=$PYTHONPATH:/workspace/src/3DGazeNet/demo:/workspace/src/gaze_detection/scripts
 
 # Print GPU/CPU configuration message
 if [ "$USE_GPU" -eq 1 ]; then
