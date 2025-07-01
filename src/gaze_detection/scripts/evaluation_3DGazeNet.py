@@ -15,6 +15,9 @@ import torch
 from transformers import AutoModelForCausalLM
 import time
 import open3d as o3d
+
+sys.path.append('/workspace/src/3DGazeNet')  # Add project root to sys.path
+
 from demo.models.face_detector import FaceDetectorIF
 from demo.models.gaze_predictor import GazePredictorHandler
 from demo.utils import config as cfg

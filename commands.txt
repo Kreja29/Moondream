@@ -59,6 +59,9 @@ cd C:\Users\Marko\Desktop\TU\MOONDREAM\ros_moondream_workspace
 	/opt/venv_py39/bin/python3 /workspace/src/gaze_detection/scripts/evaluation_script_node.py
 	
 	
+	/opt/venv_py39/bin/python3 /workspace/src/gaze_detection/scripts/evaluation_3DGazeNet.py
+	
+	
 rosservice call /snapshot_trigger
 
 
