@@ -122,7 +122,7 @@ RUN source /opt/venv_py39/bin/activate && \
         transformers==4.44.0 \
         safetensors \
         accelerate==0.32.1 \
-        pillow==10.4.0 \
+        pillow==10.0.0 \
         matplotlib>=3.7.0 \
         einops \
         tqdm>=4.65.0 \
@@ -161,7 +161,6 @@ RUN source /opt/venv_py39/bin/activate && \
         sympy==1.12 \
         threadpoolctl==3.2.0 \
         tifffile==2023.7.10 \
-        triton==2.0.0 \
         urllib3==2.0.7 \
         wcwidth==0.2.8 && \
     pip install torch==2.1.2+cu118 --index-url https://download.pytorch.org/whl/cu118 && \

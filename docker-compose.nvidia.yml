@@ -19,7 +19,7 @@ services:
       - ./rviz_views:/workspace/rviz_views
       - ./dataset:/workspace/dataset
       - ./results:/workspace/results
-      - ./3DGazeNet_data:/workspace/src/3DGazeNet/data
+      - ./3DGazeNet_data/data:/workspace/src/3DGazeNet/data
     working_dir: /workspace
     command: >
       bash -c "
