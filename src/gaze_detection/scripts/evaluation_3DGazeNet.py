@@ -81,7 +81,8 @@ class GazeEstimator:
         self.cfg.PREDICTOR.BACKBONE_TYPE = 'resnet'
         if model_ckpt_path is None:
             base = os.path.dirname(os.path.abspath(__file__))
-            model_ckpt_path = os.path.join(base, 'data', 'checkpoints', 'res18_x128_all_vfhq_vert.pth')
+            #model_ckpt_path = os.path.join(base, 'data', 'checkpoints', 'res18_x128_all_vfhq_vert.pth')
+            #model_ckpt_path = ('/workspace/src/3DGazeNet/data/models/imagenet/resnet18-5c106cde.pth')
             model_ckpt_path = ('/workspace/src/3DGazeNet/data/3dgazenet/models/singleview/vertex/ALL/test_0/checkpoint.pth')
         self.cfg.PREDICTOR.PRETRAINED = model_ckpt_path
         self.cfg.PREDICTOR.MODE = 'vertex'
@@ -91,6 +92,7 @@ class GazeEstimator:
         self.cfg.DEVICE = device
         self.face_detector = FaceDetectorIF(det_thresh, det_size)
         self.gaze_predictor = GazePredictorHandler(self.cfg.PREDICTOR, device=device)
+
     def predict(self, frame_bgr):
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         bboxs, kpts, faces = self.face_detector.run(frame_rgb)
@@ -99,18 +101,41 @@ class GazeEstimator:
         areas = [np.prod(bbox[2:4] - bbox[0:2]) for bbox in bboxs]
         idx = int(np.argmax(areas))
         kpt5 = kpts[idx]
+        left_eye = kpt5[0]
+        right_eye = kpt5[1]
+        cx = (left_eye[0] + right_eye[0]) / 2.0
+        cy = (left_eye[1] + right_eye[1]) / 2.0
+
+        h, w = frame_rgb.shape[:2]
+        eye_center = np.array([cx / w, cy / h])  # Normalize to [0, 1] range
         with torch.no_grad():
             result = self.gaze_predictor(frame_rgb, kpt5, undo_roll=True)
-        return result
-        return result.get('gaze_combined', None)
+        return eye_center, result.get('gaze_combined', None)
+    
+    def get_gaze_line_3d(vector, origin_3d, length = 1.0):
+        """
+        Get a 3D line representing the gaze direction.
+        vector: gaze direction vector (3D normalized [0, 1])
+        origin_3d: 3D point in camera coordinates (e.g., eye center)
+        length: length of the gaze line
+        Returns: a tuple of two 3D points (origin and end point of the gaze line).
+        """
+        vector = np.asarray(vector, dtype=np.float32)
+        origin_3d = np.asarray(origin_3d, dtype=np.float32)
+
+        direction = vector / np.linalg.norm(vector)  # Normalize the vector
+        point2 = origin_3d + direction * length  # Point at the end of the gaze line
+        return origin_3d, point2
+        
+
+        return np.array([[origin_3d[0], origin_3d[1], origin_3d[2]],
+                         [origin_3d[0] + x, origin_3d[1] + y, origin_3d[2]]])
 
 class GazeDetectionEvaluator:
     def __init__(self):
         # Parameters for dataset and evaluation
         self.dataset_dir = rospy.get_param('~dataset_dir', '/workspace/dataset')
         self.results_dir = rospy.get_param('~results_dir', '/workspace/results')
-        self.model_id = rospy.get_param('~model_id', "vikhyatk/moondream2")
-        self.model_revision = rospy.get_param('~model_revision', "2025-01-09")
         self.bridge = CvBridge()
         self.processing_times = []
         self.processed_count = 0
@@ -153,18 +178,18 @@ class GazeDetectionEvaluator:
             [-0.36351209, -0.23879948,  0.45211431],
         ])
         # Precompute marker positions in RGB coordinate system
-        self.marker_positions_rgb = np.array([
+        self.marker_positions_human = np.array([
             (self.R_pos_new @ marker.reshape(3, 1) + self.T_pos).flatten()
             for marker in self.marker_positions_kinect
         ])
 
-        self.marker_positions_camera = np.array([
+        self.marker_positions_camera_depth = np.array([
             (self.R_pos @ marker.reshape(3, 1) + self.T_pos).flatten()
             for marker in self.marker_positions_kinect
         ])
         
-        rospy.loginfo(f"Marker positions in RGB coordinates: {self.marker_positions_rgb}") #temp
-        rospy.loginfo(f"Marker positions in CAMERA coordinates: {self.marker_positions_camera}") #temp
+        rospy.loginfo(f"Marker positions in 'human' coordinates: {self.marker_positions_human}") #temp
+        rospy.loginfo(f"Marker positions in camera DEPTH coordinates: {self.marker_positions_camera_depth}") #temp
 
         # Depth intrinsics
         self.K_d = np.array([
@@ -188,6 +213,7 @@ class GazeDetectionEvaluator:
         ])
         self.T_extr = np.array([[0.0510585959051953], [-0.0014484138682882], [0.0117507879232922]])
 
+
         # Initialize model
         self.model = GazeEstimator()
 
@@ -205,8 +231,8 @@ class GazeDetectionEvaluator:
         session_order = ['MT', 'ET_center', 'OM1']
         total_processed = 0
         for user_id in id_list[:]: 
-            if not user_id == 'ManiGaze_ID_17':
-                continue
+            #if not user_id == 'ManiGaze_ID_17':
+            #    continue
             
             rospy.loginfo(f"Processing {user_id}")
             for session in session_order:
@@ -267,19 +293,17 @@ class GazeDetectionEvaluator:
             return
         cap = cv2.VideoCapture(rgb_file)
         cap_depth = cv2.VideoCapture(depth_file)
-        errors = []
-        x_errors = []
-        y_errors = []
-        z_errors = []
+        distance_errors = []
+        angle_errors = []
         model_times = []
         calc_times = []
         frames_read_count = 0
         gaze_detected_count = 0
         # Prepare error log file in results directory
-        error_log_path = os.path.join(self.results_dir, f"{user_id}_{session}_frame_errors.txt")
+        error_log_path = os.path.join(self.results_dir, f"{user_id}_{session}_frame_errors_3DGazeNet.txt")
         with open(error_log_path, "w") as f:
             # Write header
-            f.write("frame_idx,error,x_error,y_error,z_error,marker_idx,model_time,calc_time\n")
+            f.write("frame_idx,error_distance,error_angle,marker_idx,model_time,calc_time\n")
             for idx, event in enumerate(mouse_events):
                 if idx < 1:  # Skip first 3000 frames
                     continue
@@ -300,103 +324,111 @@ class GazeDetectionEvaluator:
                 
                 frames_read_count += 1
 
+                # Reconstruct a correct depth frame
+                if depth_frame is not None:
+                    depth_m = self.reconstruct_depth_16bit(depth_frame)
+                else:
+                    depth_m = None
+
                 # --- Model (gaze) processing time ---
                 t0 = time.time()
+                # Get gaze from frame using 3DGazeNet model
+                # eye_center is normalized (0, 1) coordinates of the eye center in the RGB image
+                # gaze_vec3d is a 3D gaze vector in camera RGB coordinates
 
-                gaze_2d = self.get_gaze_from_frame(frame)
+                result = self.model.predict(frame)
+                if result is None:
+                    rospy.logwarn(f"    No gaze or eye center detected in frame {idx}")
+                    continue
+                eye_center, gaze_vec3d = result
 
-                t1 = time.time()
-                
-                if gaze_2d is None:
+                eye_center_u = eye_center[0]  # normalized u coordinate
+                eye_center_v = eye_center[1]  # normalized v coordinate
+
+                if gaze_vec3d is None:
                     rospy.logwarn(f"    No gaze detected in frame {idx}")
                     continue
+                if eye_center is None:
+                    rospy.logwarn(f"    No eye center detected in frame {idx}")
+                    continue
+                
+                t1 = time.time()
                 
                 gaze_detected_count += 1
                 model_times.append(t1 - t0)
 
-                rospy.loginfo(f"    gaze {gaze_2d}")
+                rospy.loginfo(f"    gaze {gaze_vec3d}")
+                rospy.loginfo(f"    model processing time: {t1 - t0:.3f}s")
 
-                u_norm, v_norm = gaze_2d  # normalized [0, 1]
-
-                # --- Calculation (projection/error) processing time ---
                 t2 = time.time()
-
-                # Reconstruct a correct depth frame
-                if depth_frame is not None:
-                    depth_m = self.reconstruct_depth_16bit(depth_frame)
-                    rospy.loginfo(f"    Depth min/max: {depth_m.min()} / {depth_m.max()}, dtype={depth_m.dtype}") #temp
-                else:
-                    depth_m = None
-
-                # Get 3D point using correspondence method 
-                pred_3d_depth = self.find_3d_point_from_rgb_gaze(
-                    u_norm, v_norm, depth_m,
+                # Convert eye_center to 3d coordinates in camera DEPTH frame
+                eye_center_pred_3d_depth = self.find_3d_point_from_rgb_gaze(
+                    eye_center_u, eye_center_v, depth_m,
                     self.K_rgb, self.K_d, self.R_extr, self.T_extr,
                     rgb_shape=frame.shape,
                     visualize=False  # Set to True to visualize the 3D points and line
                 ) if depth_m is not None else None
-                rospy.loginfo(f"    3D point in depth camera coordinates: {pred_3d_depth}")  #temp
-                if pred_3d_depth is None:
-                    rospy.logwarn(f"    No 3D correspondence for frame {idx}, normalized ({u_norm},{v_norm})")
-                    continue
+                
+                eye_center_pred_3d_rgb = (self.R_extr @ eye_center_pred_3d_depth.reshape(3, 1) + 
+                                          self.T_extr).flatten()
+
+                gaze_point_3d_rgb = eye_center_pred_3d_rgb - gaze_vec3d
+                gaze_point_3d_depth = (self.R_extr.T @ (gaze_point_3d_rgb.reshape(3, 1) -
+                                       self.T_extr)).flatten()
+
+                rospy.loginfo(f"    Gaze point in depth camera coordinates: {gaze_point_3d_depth}")
 
                 # Get marker index from gaze_labels
                 marker_idx = gaze_labels[idx]
                 if marker_idx < 0 or marker_idx >= self.marker_positions_kinect.shape[0]:
                     rospy.logwarn(f"    Invalid marker index {marker_idx} at frame {idx}")
                     continue
-                # Marker position in depth camera coordinate system (precomputed)
-                marker_camera = self.marker_positions_camera[marker_idx]
+                # Marker position in depth camera coordinate system
+                marker_camera = self.marker_positions_camera_depth[marker_idx]
                 rospy.loginfo(f"    Marker {marker_idx} position in camera (depth) coordinates: {marker_camera}")
-                # Compute error vector and distance in depth camera coordinate system
-                error_vec = pred_3d_depth - marker_camera
-                error = np.linalg.norm(error_vec)
-                errors.append(error)
-                x_errors.append(error_vec[0])
-                y_errors.append(error_vec[1])
-                z_errors.append(error_vec[2])
+
+                error_distance, error_angle = self.get_marker_errors(eye_center_pred_3d_depth, gaze_point_3d_depth, marker_camera)
                 t3 = time.time()
                 calc_times.append(t3 - t2)
+                
+                # Append errors to lists
+                distance_errors.append(error_distance)
+                angle_errors.append(error_angle)
+
 
                 # Log all error components and timing for this frame
-                rospy.loginfo(f"    Frame {idx}: error={error:.3f}m (x={error_vec[0]:.3f}, y={error_vec[1]:.3f}, z={error_vec[2]:.3f}), marker={marker_idx}, model_time={t1-t0:.3f}s, calc_time={t3-t2:.3f}s")
+                rospy.loginfo(f"    Frame {idx}: error={error_distance:.3f}m, marker={marker_idx}, model_time={t1-t0:.3f}s, calc_time={t3-t2:.3f}s")
                 # Write per-frame error to file
-                f.write(f"{idx},{error:.6f},{error_vec[0]:.6f},{error_vec[1]:.6f},{error_vec[2]:.6f},{marker_idx},{t1-t0:.6f},{t3-t2:.6f}\n")
+                f.write(f"{idx},{error_distance:.6f},{error_angle:.6f},{marker_idx},{t1-t0:.6f},{t3-t2:.6f}\n")
         cap.release()
         cap_depth.release()
 
         gaze_detection_rate = (gaze_detected_count / frames_read_count * 100) if frames_read_count > 0 else 0
 
-        if errors:
+        if distance_errors and angle_errors and model_times and calc_times:
             # Compute and log mean and std for all error components and timings
-            mean_error = np.mean(errors)
-            std_error = np.std(errors)
-            mean_x = np.mean(x_errors)
-            std_x = np.std(x_errors)
-            mean_y = np.mean(y_errors)
-            std_y = np.std(y_errors)
-            mean_z = np.mean(z_errors)
-            std_z = np.std(z_errors)
+            mean_error_distance = np.mean(distance_errors)
+            std_error_distance = np.std(distance_errors)
+            mean_error_angle = np.mean(angle_errors)
+            std_error_angle = np.std(angle_errors)
             mean_model_time = np.mean(model_times)
             std_model_time = np.std(model_times)
             mean_calc_time = np.mean(calc_times)
             std_calc_time = np.std(calc_times)
             rospy.loginfo(f"    Gaze detection rate: {gaze_detection_rate:.2f}% ({gaze_detected_count}/{frames_read_count})")
-            rospy.loginfo(f"    MT session mean error: {mean_error:.3f}±{std_error:.3f}m over {len(errors)} frames")
-            rospy.loginfo(f"    Mean x error: {mean_x:.3f}±{std_x:.3f}m, y error: {mean_y:.3f}±{std_y:.3f}m, z error: {mean_z:.3f}±{std_z:.3f}m")
-            rospy.loginfo(f"    Model time: {mean_model_time:.3f}±{std_model_time:.3f}s, Calc time: {mean_calc_time:.3f}±{std_calc_time:.3f}s")
+            rospy.loginfo(f"    MT session mean distance error: {mean_error_distance:.3f}±{std_error_distance:.3f}m over {len(distance_errors)} frames")
+            rospy.loginfo(f"    MT session mean angle error: {mean_error_angle:.3f}±{std_error_angle:.3f}m over {len(angle_errors)} frames")
+            rospy.loginfo(f"    Model time: {mean_model_time:.3f}±{std_model_time:.3f}s")
 
-            summary_log_path = os.path.join(self.results_dir, f"{user_id}_{session}_summary.txt")
+            summary_log_path = os.path.join(self.results_dir, f"{user_id}_{session}_summary_3DGazeNet.txt")
             with open(summary_log_path, "w") as f:
                 summary_line = (
                     f"Summary: "
                     f"GazeDetectionRate={gaze_detection_rate:.2f}%, "
                     f"FramesWithGaze={gaze_detected_count}, "
                     f"FramesProcessed={frames_read_count}, "
-                    f"MeanError={mean_error:.6f}, StdError={std_error:.6f}, "
-                    f"MeanXError={mean_x:.6f}, StdXError={std_x:.6f}, "
-                    f"MeanYError={mean_y:.6f}, StdYError={std_y:.6f}, "
-                    f"MeanZError={mean_z:.6f}, StdZError={std_z:.6f}, "
+                    f"MeanDistanceError={mean_error_distance:.6f}, StdDistanceError={std_error_distance:.6f}, "
+                    f"MeanAngleError={mean_error_angle:.6f}, StdAngleError={std_error_angle:.6f}, "
                     f"MeanModelTime={mean_model_time:.6f}, StdModelTime={std_model_time:.6f}, "
                     f"MeanCalcTime={mean_calc_time:.6f}, StdCalcTime={std_calc_time:.6f}\n"
                 )
@@ -424,12 +456,6 @@ class GazeDetectionEvaluator:
         if speech_labels is not None:
             rospy.loginfo(f"    Speech labels: {len(speech_labels)} lines")
         # TODO: Add OM-specific evaluation logic here
-
-    def get_gaze_from_frame(self, frame: np.ndarray) -> Optional[Tuple[float, float]]:
-        # Use 3DGazeNet model
-        gaze_vec = self.model.predict(frame)
-        print(f"3DGazeNet output: {gaze_vec}")
-        return gaze_vec
 
     def get_depth_at_pixel(self, depth_frame: Optional[np.ndarray], u_norm: float, v_norm: float, filtering: bool = True, filter_width: int = 3) -> Optional[float]:
         # Extract the depth value from the depth frame at normalized coordinates (u_norm, v_norm)
@@ -547,10 +573,12 @@ class GazeDetectionEvaluator:
         """
         Given normalized (u,v) in RGB image, find the closest 3D point in the depth camera frame to the backprojected gaze ray.
         Optionally visualize the 3D depth points, the line, and the markers using Open3D.
-        Returns the 3D point in RGB camera coordinates, or None if not found.
+        Returns the 3D point in DEPTH camera coordinates, or None if not found.
         rgb_shape: tuple (height, width) of the RGB frame (must be provided)
         visualize: if True, plot the 3D points, line, and markers
         """
+        #temp_gaze_point = np.array([-0.48376344,  0.06319244,  0.28035666], dtype=np.float32)
+        #temp_gaze_vector = np.array([ 0.37743634, -0.35680875,  0.85453457], dtype=np.float32)
         if depth_frame is None:
             return None
         h_d, w_d = depth_frame.shape[:2]
@@ -589,7 +617,7 @@ class GazeDetectionEvaluator:
         if visualize:
             # Depth points as point cloud
             pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(points[::100])
+            pcd.points = o3d.utility.Vector3dVector(points[::10])
             pcd.paint_uniform_color([0.2, 0.2, 1.0])
             # Gaze line as line set
             t_line = np.linspace(-0.1, 2, 100)
@@ -601,10 +629,19 @@ class GazeDetectionEvaluator:
             sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
             sphere.translate(closest_point_depth)
             sphere.paint_uniform_color([0.0, 1.0, 0.0])
+            #sphere1 = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+            #sphere1.translate(closest_point_depth - temp_gaze_vector * 1.0)
+            #sphere1.paint_uniform_color([0.0, 1.0, 0.0])
+            #sphere2 = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+            #sphere2.translate(temp_gaze_point)
+            #sphere2.paint_uniform_color([1.0, 0.0, 0.0])
+
+            #rospy.loginfo(f"    Gaze point original: {closest_point_depth - temp_gaze_vector * 1.0}")
+
             # Markers as spheres or points
             marker_meshes = []
-            if self.marker_positions_camera is not None:
-                for m in self.marker_positions_camera:
+            if self.marker_positions_camera_depth is not None:
+                for m in self.marker_positions_camera_depth:
                     m_depth = R.T @ (m - T)
                     marker = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
                     marker.translate(m_depth)
@@ -612,6 +649,36 @@ class GazeDetectionEvaluator:
                     marker_meshes.append(marker)
             o3d.visualization.draw_geometries([pcd, line_pcd, sphere] + marker_meshes)
         return closest_point_depth
+    
+    def get_marker_errors(self, eyes, gaze_point_3d, marker):
+        """
+        Calculate the error between the predicted gaze line and the marker position.
+        eyes: 3d coordinates of the eyes in depth camera coordinates
+        gaze_point_3d: 3d coordinates of a point in the gaze line in depth camera coordinates
+        marker: 3d coordinates of a point from which the error is calculated
+        Returns: error distance and error angle
+        """
+
+        eyes = np.array(eyes)
+        gaze = np.array(gaze_point_3d)
+        marker = np.array(marker)
+
+        # Vector from eyes to gaze and eyes to marker
+        gaze_vector = gaze - eyes
+        marker_vector = marker - eyes
+
+        # Distance from point to line: ||(marker_vector x gaze_vector)|| / ||gaze_vector||
+        cross_product = np.cross(marker_vector, gaze_vector)
+        error_distance = np.linalg.norm(cross_product) / np.linalg.norm(gaze_vector)
+
+        # Angle error: angle between gaze vector and marker vector
+        dot_product = np.dot(gaze_vector, marker_vector)
+        norms_mult = np.linalg.norm(gaze_vector) * np.linalg.norm(marker_vector)
+        cos_theta = np.clip(dot_product / norms_mult, -1.0, 1.0)
+        angle_error = np.arccos(cos_theta)  # in radians
+        angle_error_degrees = np.degrees(angle_error)  # convert to degrees
+
+        return error_distance, angle_error_degrees
 
 if __name__ == "__main__":
     try:

@@ -551,7 +551,7 @@ class GazeDetectionEvaluator:
         """
         Given normalized (u,v) in RGB image, find the closest 3D point in the depth camera frame to the backprojected gaze ray.
         Optionally visualize the 3D depth points, the line, and the markers using Open3D.
-        Returns the 3D point in RGB camera coordinates, or None if not found.
+        Returns the 3D point in DEPTH camera coordinates, or None if not found.
         rgb_shape: tuple (height, width) of the RGB frame (must be provided)
         visualize: if True, plot the 3D points, line, and markers
         """
