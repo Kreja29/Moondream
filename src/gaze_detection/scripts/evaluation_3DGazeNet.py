@@ -142,28 +142,17 @@ class GazeDetectionEvaluator:
             [1.0]
         ])
         # Transformation from robot to Kinect camera
-        R_robot_to_kinect = np.array([
+        self.R_robot_to_kinect = np.array([
         [ 0.06456814,  0.99782479,  0.01329078],
         [-0.32914885,  0.00872184,  0.94423777],
         [ 0.94206793, -0.06534232,  0.32899604]
         ])
 
-        T_robot_to_kinect = np.array([
+        self.T_robot_to_kinect = np.array([
         [-0.10617324],
         [ 0.03664513],
         [-0.2154056 ]
         ])
-
-        def transform_robot_to_camera_depth(self, effector_pos: np.ndarray) -> np.ndarray:
-            """
-            Transform a point in robot coordinates to camera DEPTH coordinates.
-            effector_pos: 3D point in robot coordinates (shape: (3,))
-            Returns the transformed point in camera DEPTH coordinates.
-            """
-            effector_kinect = R_robot_to_kinect @ effector_pos + T_robot_to_kinect.flatten()
-            effector_depth = self.R_pos @ effector_kinect.reshape(3, 1) + self.T_pos
-            return effector_depth.flatten()
-        
 
         # Marker positions in Kinect camera coordinates
         self.marker_positions_kinect = np.array([
@@ -841,6 +830,16 @@ class GazeDetectionEvaluator:
         angle_error_degrees = np.degrees(angle_error)  # convert to degrees
 
         return error_distance, angle_error_degrees
+    
+    def transform_robot_to_camera_depth(self, effector_pos: np.ndarray) -> np.ndarray:
+        """
+        Transform a point in robot coordinates to camera DEPTH coordinates.
+        effector_pos: 3D point in robot coordinates (shape: (3,))
+        Returns the transformed point in camera DEPTH coordinates.
+        """
+        effector_kinect = self.R_robot_to_kinect @ effector_pos + self.T_robot_to_kinect.flatten()
+        effector_depth = self.R_pos @ effector_kinect.reshape(3, 1) + self.T_pos
+        return effector_depth.flatten()
 
 if __name__ == "__main__":
     try:
