@@ -112,24 +112,6 @@ class GazeEstimator:
             result = self.gaze_predictor(frame_rgb, kpt5, undo_roll=True)
         return eye_center, result.get('gaze_combined', None)
     
-    def get_gaze_line_3d(vector, origin_3d, length = 1.0):
-        """
-        Get a 3D line representing the gaze direction.
-        vector: gaze direction vector (3D normalized [0, 1])
-        origin_3d: 3D point in camera coordinates (e.g., eye center)
-        length: length of the gaze line
-        Returns: a tuple of two 3D points (origin and end point of the gaze line).
-        """
-        vector = np.asarray(vector, dtype=np.float32)
-        origin_3d = np.asarray(origin_3d, dtype=np.float32)
-
-        direction = vector / np.linalg.norm(vector)  # Normalize the vector
-        point2 = origin_3d + direction * length  # Point at the end of the gaze line
-        return origin_3d, point2
-        
-
-        return np.array([[origin_3d[0], origin_3d[1], origin_3d[2]],
-                         [origin_3d[0] + x, origin_3d[1] + y, origin_3d[2]]])
 
 class GazeDetectionEvaluator:
     def __init__(self):
@@ -229,6 +211,7 @@ class GazeDetectionEvaluator:
         rospy.loginfo(f"Evaluating dataset in {self.dataset_dir}")
         id_list = self.dataset_helper.get_id_list()
         session_order = ['MT', 'ET_center', 'OM1']
+        session_order = ['MT', 'ET_center']
         total_processed = 0
         for user_id in id_list[:]: 
             #if not user_id == 'ManiGaze_ID_17':
