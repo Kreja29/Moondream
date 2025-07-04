@@ -235,7 +235,7 @@ class GazeDetectionEvaluator:
         rospy.loginfo(f"Evaluating dataset in {self.dataset_dir}")
         id_list = self.dataset_helper.get_id_list()
         session_order = ['MT', 'ET_center', 'OM1']
-        session_order = ['MT', 'ET_center']
+        session_order = ['ET_center', 'MT']
         total_processed = 0
         for user_id in id_list[:]: 
             #if not user_id == 'ManiGaze_ID_17':
@@ -374,7 +374,7 @@ class GazeDetectionEvaluator:
                     self.K_rgb, self.K_d, self.R_extr, self.T_extr,
                     rgb_shape=frame.shape,
                     gaze_vec3d_rgb=gaze_vec3d,
-                    visualize=False  # Set to True to visualize the 3D points and line
+                    visualize=True  # Set to True to visualize the 3D points and line
                 ) if depth_m is not None else (None, None)
                 
                 if eye_center_pred_3d_depth is None or gaze_point_3d_depth is None:
