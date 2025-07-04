@@ -220,6 +220,8 @@ class GazeDetectionEvaluator:
 
         rospy.loginfo("GazeDetectionEvaluator initialized")
 
+        self.end_effector_vis = None
+
     def evaluate_dataset(self):
         rospy.loginfo(f"Evaluating dataset in {self.dataset_dir}")
         id_list = self.dataset_helper.get_id_list()
@@ -318,7 +320,10 @@ class GazeDetectionEvaluator:
                     rospy.logwarn(f"    No side selection for frame {idx}, skipping")
                     continue
                 end_effector = end_effector.reshape(3, 1)  # Ensure it's a column vector
+                rospy.loginfo(f"    End effector position in robot coordinates: {end_effector.flatten()}")
                 end_effector_camera_depth = self.transform_robot_to_camera_depth(end_effector)
+                rospy.loginfo(f"    End effector position in camera DEPTH coordinates: {end_effector_camera_depth.flatten()}")
+                self.end_effector_vis = end_effector_camera_depth.flatten()
 
 
                 # Reconstruct a correct depth frame
@@ -358,13 +363,20 @@ class GazeDetectionEvaluator:
                 rospy.loginfo(f"    model processing time: {t1 - t0:.3f}s")
 
                 t2 = time.time()
+
+                if idx == 3370:
+                    visual = True
+                else:
+                    visual = False
+
+
                 # Convert eye_center to 3d coordinates in camera DEPTH frame
                 eye_center_pred_3d_depth, gaze_point_3d_depth = self.find_3d_point_from_rgb_gaze(
                     eye_center_u, eye_center_v, depth_m,
                     self.K_rgb, self.K_d, self.R_extr, self.T_extr,
                     rgb_shape=frame.shape,
                     gaze_vec3d_rgb=gaze_vec3d,
-                    visualize=True  # Set to True to visualize the 3D points and line
+                    visualize=visual  # Set to True to visualize the 3D points and line
                 ) if depth_m is not None else (None, None)
 
                 if eye_center_pred_3d_depth is None or gaze_point_3d_depth is None:
@@ -530,7 +542,7 @@ class GazeDetectionEvaluator:
                     self.K_rgb, self.K_d, self.R_extr, self.T_extr,
                     rgb_shape=frame.shape,
                     gaze_vec3d_rgb=gaze_vec3d,
-                    visualize=True  # Set to True to visualize the 3D points and line
+                    visualize=False  # Set to True to visualize the 3D points and line
                 ) if depth_m is not None else (None, None)
                 
                 if eye_center_pred_3d_depth is None or gaze_point_3d_depth is None:
@@ -783,6 +795,9 @@ class GazeDetectionEvaluator:
             sphere_gaze = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
             sphere_gaze.translate(gaze_point_3d_depth)
             sphere_gaze.paint_uniform_color([1.0, 0.0, 0.0])
+            sphere_end_effector = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+            sphere_end_effector.translate(self.end_effector_vis)
+            sphere_end_effector.paint_uniform_color([1.0, 0.0, 0.0])
             # Add a line between sphere_eye and sphere_gaze
             points_line = [eye_center_pred_3d_depth, gaze_point_3d_depth]
             lines = [[0, 1]]
@@ -798,7 +813,7 @@ class GazeDetectionEvaluator:
                     marker.translate(m)
                     marker.paint_uniform_color([1.0, 0.5, 0.0])
                     marker_meshes.append(marker)
-            o3d.visualization.draw_geometries([pcd, line_pcd, sphere_eye, sphere_gaze, line_set] + marker_meshes)
+            o3d.visualization.draw_geometries([pcd, line_pcd, sphere_eye, sphere_gaze, sphere_end_effector, line_set] + marker_meshes)
         return eye_center_pred_3d_rgb, gaze_point_3d_depth
     
     def get_marker_errors(self, eyes, gaze_point_3d, marker):
@@ -837,7 +852,18 @@ class GazeDetectionEvaluator:
         effector_pos: 3D point in robot coordinates (shape: (3,))
         Returns the transformed point in camera DEPTH coordinates.
         """
-        effector_kinect = self.R_robot_to_kinect @ effector_pos + self.T_robot_to_kinect.flatten()
+        effector_kinect = self.R_robot_to_kinect @ effector_pos + self.T_robot_to_kinect
+        effector_depth = self.R_pos @ effector_kinect.reshape(3, 1) + self.T_pos
+        effector_depth[0] = -effector_depth[0]  # Invert x coordinate for depth camera
+        return effector_depth.flatten()
+    
+    def transform_robot_to_camera_depth2(self, effector_pos: np.ndarray) -> np.ndarray:
+        """
+        Transform a point in robot coordinates to camera DEPTH coordinates.
+        effector_pos: 3D point in robot coordinates (shape: (3,))
+        Returns the transformed point in camera DEPTH coordinates.
+        """
+        effector_kinect = self.R_robot_to_kinect.T @ (effector_pos - self.T_robot_to_kinect)
         effector_depth = self.R_pos @ effector_kinect.reshape(3, 1) + self.T_pos
         return effector_depth.flatten()
 
