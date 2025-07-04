@@ -369,21 +369,17 @@ class GazeDetectionEvaluator:
 
                 t2 = time.time()
                 # Convert eye_center to 3d coordinates in camera DEPTH frame
-                eye_center_pred_3d_depth = self.find_3d_point_from_rgb_gaze(
+                eye_center_pred_3d_depth, gaze_point_3d_depth = self.find_3d_point_from_rgb_gaze(
                     eye_center_u, eye_center_v, depth_m,
                     self.K_rgb, self.K_d, self.R_extr, self.T_extr,
                     rgb_shape=frame.shape,
+                    gaze_vec3d_rgb=gaze_vec3d,
                     visualize=False  # Set to True to visualize the 3D points and line
-                ) if depth_m is not None else None
+                ) if depth_m is not None else (None, None)
                 
-                eye_center_pred_3d_rgb = (self.R_extr @ eye_center_pred_3d_depth.reshape(3, 1) + 
-                                          self.T_extr).flatten()
-
-                gaze_point_3d_rgb = eye_center_pred_3d_rgb - gaze_vec3d
-                gaze_point_3d_depth = (self.R_extr.T @ (gaze_point_3d_rgb.reshape(3, 1) -
-                                       self.T_extr)).flatten()
-
-                rospy.loginfo(f"    Gaze point in depth camera coordinates: {gaze_point_3d_depth}")
+                if eye_center_pred_3d_depth is None or gaze_point_3d_depth is None:
+                    rospy.logwarn(f"    No valid 3D eye center or gaze point found in frame {idx}")
+                    continue
 
                 # Get marker index from gaze_labels
                 marker_idx = gaze_labels[idx]
@@ -401,7 +397,6 @@ class GazeDetectionEvaluator:
                 # Append errors to lists
                 distance_errors.append(error_distance)
                 angle_errors.append(error_angle)
-
 
                 # Log all error components and timing for this frame
                 rospy.loginfo(f"    Frame {idx}: error={error_distance:.3f}m, marker={marker_idx}, model_time={t1-t0:.3f}s, calc_time={t3-t2:.3f}s")
@@ -576,18 +571,17 @@ class GazeDetectionEvaluator:
         depth_m = depth_16bit.astype(np.float32) / 1000.0  # convert to meters
         return depth_m
 
-    def find_3d_point_from_rgb_gaze(self, u_norm, v_norm, depth_frame, K_rgb, K_d, R_extr, T_extr, rgb_shape, visualize=False):
+    def find_3d_point_from_rgb_gaze(self, u_norm, v_norm, depth_frame, K_rgb, K_d, R_extr, T_extr, rgb_shape, gaze_vec3d_rgb, visualize=False):
         """
-        Given normalized (u,v) in RGB image, find the closest 3D point in the depth camera frame to the backprojected gaze ray.
-        Optionally visualize the 3D depth points, the line, and the markers using Open3D.
-        Returns the 3D point in DEPTH camera coordinates, or None if not found.
-        rgb_shape: tuple (height, width) of the RGB frame (must be provided)
-        visualize: if True, plot the 3D points, line, and markers
+        Given normalized (u,v) in RGB image and a 3D gaze vector in RGB camera coordinates, find:
+        - The closest 3D point in the depth camera frame to the backprojected gaze ray (eye center in depth)
+        - Convert this point to RGB camera coordinates (eye center in RGB)
+        - Subtract the gaze vector (in RGB) to get the gaze point in RGB
+        - Convert this gaze point back to depth camera coordinates (gaze point in depth)
+        Returns (eye_center_pred_3d_rgb, gaze_point_3d_depth)
         """
-        #temp_gaze_point = np.array([-0.48376344,  0.06319244,  0.28035666], dtype=np.float32)
-        #temp_gaze_vector = np.array([ 0.37743634, -0.35680875,  0.85453457], dtype=np.float32)
         if depth_frame is None:
-            return None
+            return None, None
         h_d, w_d = depth_frame.shape[:2]
         h_rgb, w_rgb = rgb_shape[:2]
         u = u_norm * w_rgb
@@ -611,7 +605,7 @@ class GazeDetectionEvaluator:
         valid = (z > 0).reshape(-1)
         points = points[valid]
         if points.shape[0] == 0:
-            return None
+            return None, None
         # Find closest point to the line
         line_vec = p1_depth - p0_depth
         line_vec /= np.linalg.norm(line_vec)
@@ -620,42 +614,46 @@ class GazeDetectionEvaluator:
         proj = p0_depth + np.outer(t, line_vec)
         dists = np.linalg.norm(points - proj, axis=1)
         idx = np.argmin(dists)
-        closest_point_depth = points[idx]
+        eye_center_pred_3d_depth = points[idx]
+        # Convert eye center from depth to RGB camera coordinates
+        eye_center_pred_3d_rgb = (R_extr @ eye_center_pred_3d_depth.reshape(3, 1) + T_extr.reshape(3, 1)).flatten()
+        # Subtract gaze vector in RGB to get gaze point in RGB
+        gaze_point_3d_rgb = eye_center_pred_3d_rgb - gaze_vec3d_rgb
+        # Convert gaze point from RGB to depth camera coordinates
+        gaze_point_3d_depth = R_extr.T @ (gaze_point_3d_rgb - T_extr.flatten())
         if visualize:
             # Depth points as point cloud
             pcd = o3d.geometry.PointCloud()
             pcd.points = o3d.utility.Vector3dVector(points[::10])
             pcd.paint_uniform_color([0.2, 0.2, 1.0])
-            # Gaze line as line set
             t_line = np.linspace(-0.1, 2, 100)
             line_pts = p0_depth[None,:] + t_line[:,None] * line_vec[None,:]
             line_pcd = o3d.geometry.PointCloud()
             line_pcd.points = o3d.utility.Vector3dVector(line_pts)
             line_pcd.paint_uniform_color([1.0, 0.0, 0.0])
-            # Closest point as a small sphere
-            sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
-            sphere.translate(closest_point_depth)
-            sphere.paint_uniform_color([0.0, 1.0, 0.0])
-            #sphere1 = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
-            #sphere1.translate(closest_point_depth - temp_gaze_vector * 1.0)
-            #sphere1.paint_uniform_color([0.0, 1.0, 0.0])
-            #sphere2 = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
-            #sphere2.translate(temp_gaze_point)
-            #sphere2.paint_uniform_color([1.0, 0.0, 0.0])
-
-            #rospy.loginfo(f"    Gaze point original: {closest_point_depth - temp_gaze_vector * 1.0}")
-
-            # Markers as spheres or points
+            sphere_eye = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+            sphere_eye.translate(eye_center_pred_3d_depth)
+            sphere_eye.paint_uniform_color([0.0, 1.0, 0.0])
+            sphere_gaze = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
+            sphere_gaze.translate(gaze_point_3d_depth)
+            sphere_gaze.paint_uniform_color([1.0, 0.0, 0.0])
+            # Add a line between sphere_eye and sphere_gaze
+            points_line = [eye_center_pred_3d_depth, gaze_point_3d_depth]
+            lines = [[0, 1]]
+            colors = [[0.0, 1.0, 0.0]]  # green line
+            line_set = o3d.geometry.LineSet()
+            line_set.points = o3d.utility.Vector3dVector(points_line)
+            line_set.lines = o3d.utility.Vector2iVector(lines)
+            line_set.colors = o3d.utility.Vector3dVector(colors)
             marker_meshes = []
             if self.marker_positions_camera_depth is not None:
                 for m in self.marker_positions_camera_depth:
-                    m_depth = R.T @ (m - T)
                     marker = o3d.geometry.TriangleMesh.create_sphere(radius=0.01)
-                    marker.translate(m_depth)
+                    marker.translate(m)
                     marker.paint_uniform_color([1.0, 0.5, 0.0])
                     marker_meshes.append(marker)
-            o3d.visualization.draw_geometries([pcd, line_pcd, sphere] + marker_meshes)
-        return closest_point_depth
+            o3d.visualization.draw_geometries([pcd, line_pcd, sphere_eye, sphere_gaze, line_set] + marker_meshes)
+        return eye_center_pred_3d_rgb, gaze_point_3d_depth
     
     def get_marker_errors(self, eyes, gaze_point_3d, marker):
         """
