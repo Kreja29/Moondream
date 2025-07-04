@@ -234,7 +234,7 @@ class GazeDetectionEvaluator:
     def evaluate_dataset(self):
         rospy.loginfo(f"Evaluating dataset in {self.dataset_dir}")
         id_list = self.dataset_helper.get_id_list()
-        session_order = ['MT', 'ET_center', 'OM1']
+        session_order = ['ET_center', 'MT']
         session_order = ['ET_center', 'MT']
         total_processed = 0
         for user_id in id_list[:]: 
@@ -252,8 +252,6 @@ class GazeDetectionEvaluator:
                     self.process_mt_session(user_id, session)
                 elif session == 'ET_center':
                     self.process_et_center_session(user_id, session)
-                elif session == 'OM1':
-                    self.process_om_session(user_id, session)
                 else:
                     rospy.logwarn(f"  Unknown session type: {session}")
                     continue
@@ -277,7 +275,178 @@ class GazeDetectionEvaluator:
             rospy.loginfo(f"    Left arm: {left_arm.shape}")
         if right_arm is not None:
             rospy.loginfo(f"    Right arm: {right_arm.shape}")
-        # TODO: Add ET_center-specific evaluation logic here
+        if rgb_file is None or not os.path.exists(rgb_file):
+            rospy.logwarn(f"    RGB video file not found: {rgb_file}")
+            return
+        
+        cap = cv2.VideoCapture(rgb_file)
+        cap_depth = cv2.VideoCapture(depth_file)
+        distance_errors = []
+        angle_errors = []
+        model_times = []
+        calc_times = []
+        frames_read_count = 0
+        gaze_detected_count = 0
+        side_selection = None
+        speech_string = None
+        end_effector = None
+        end_effector_camera_depth = None
+
+        # Prepare error log file in results directory
+        error_log_path = os.path.join(self.results_dir, f"{user_id}_{session}_frame_errors_3DGazeNet.txt")
+        with open(error_log_path, "w") as f:
+            # Write header
+            f.write("frame_idx,error_distance,error_angle,side_selection,model_time,calc_time\n")
+            for idx, event in enumerate(mouse_events):
+                speech_string = speech_labels[idx].strip()
+                if 'left' in speech_string:
+                    side_selection = 'left'
+                elif 'other' in speech_string:
+                    side_selection = 'right'
+                
+                if event == -1:
+                    continue
+                rospy.loginfo(f"Processing frame {idx} for {user_id} {session}")
+
+                # Set video to the correct frame
+                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                ret, frame = cap.read()
+                if not ret:
+                    rospy.logwarn(f"    Could not read frame {idx} from {rgb_file}")
+                    continue
+                cap_depth.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                ret_depth, depth_frame = cap_depth.read()
+                if not ret_depth:
+                    rospy.logwarn(f"    Could not read depth frame {idx} from {depth_file}")
+                    continue
+                frames_read_count += 1
+
+                if side_selection == 'left':
+                    end_effector = left_arm[idx]
+                elif side_selection == 'right':
+                    end_effector = right_arm[idx]
+                else:
+                    rospy.logwarn(f"    No side selection for frame {idx}, skipping")
+                    continue
+                end_effector = end_effector.reshape(3, 1)  # Ensure it's a column vector
+                end_effector_camera_depth = self.transform_robot_to_camera_depth(end_effector)
+
+
+                # Reconstruct a correct depth frame
+                if depth_frame is not None:
+                    depth_m = self.reconstruct_depth_16bit(depth_frame)
+                else:
+                    depth_m = None
+
+                
+
+                # --- Model (gaze) processing time ---
+                t0 = time.time()
+                # Get gaze from frame using 3DGazeNet model
+                # eye_center is normalized (0, 1) coordinates of the eye center in the RGB image
+                # gaze_vec3d is a 3D gaze vector in camera RGB coordinates
+
+                result = self.model.predict(frame)
+                if result is None:
+                    rospy.logwarn(f"    No gaze or eye center detected in frame {idx}")
+                    continue
+                eye_center, gaze_vec3d = result
+                eye_center_u = eye_center[0]  # normalized u coordinate
+                eye_center_v = eye_center[1]  # normalized v coordinate
+
+                if gaze_vec3d is None:
+                    rospy.logwarn(f"    No gaze detected in frame {idx}")
+                    continue
+                if eye_center is None:
+                    rospy.logwarn(f"    No eye center detected in frame {idx}")
+                    continue
+
+                t1 = time.time()
+                gaze_detected_count += 1
+                model_times.append(t1 - t0)
+
+                rospy.loginfo(f"    gaze {gaze_vec3d}")
+                rospy.loginfo(f"    model processing time: {t1 - t0:.3f}s")
+
+                t2 = time.time()
+                # Convert eye_center to 3d coordinates in camera DEPTH frame
+                eye_center_pred_3d_depth, gaze_point_3d_depth = self.find_3d_point_from_rgb_gaze(
+                    eye_center_u, eye_center_v, depth_m,
+                    self.K_rgb, self.K_d, self.R_extr, self.T_extr,
+                    rgb_shape=frame.shape,
+                    gaze_vec3d_rgb=gaze_vec3d,
+                    visualize=True  # Set to True to visualize the 3D points and line
+                ) if depth_m is not None else (None, None)
+
+                if eye_center_pred_3d_depth is None or gaze_point_3d_depth is None:
+                    rospy.logwarn(f"    No valid 3D eye center or gaze point found in frame {idx}")
+                    continue
+                
+                error_distance, error_angle = self.get_marker_errors(
+                    eye_center_pred_3d_depth, gaze_point_3d_depth, end_effector_camera_depth
+                )
+                t3 = time.time()
+                calc_times.append(t3 - t2)
+
+                # Append errors to lists
+                distance_errors.append(error_distance)
+                angle_errors.append(error_angle)
+
+                # Log all error components and timing for this frame
+                rospy.loginfo(f"    Frame {idx}: error={error_distance:.3f}m, side_selection={side_selection}, model_time={t1-t0:.3f}s, calc_time={t3-t2:.3f}s")
+                # Write per-frame error to file
+                f.write(f"{idx},{error_distance:.6f},{error_angle:.6f},{side_selection},{t1-t0:.6f},{t3-t2:.6f}\n")
+            
+        cap.release()
+        cap_depth.release()
+
+        gaze_detection_rate = (gaze_detected_count / frames_read_count * 100) if frames_read_count > 0 else 0
+
+        if distance_errors and angle_errors and model_times and calc_times:
+            # Compute and log mean and std for all error components and timings
+            mean_error_distance = np.mean(distance_errors)
+            std_error_distance = np.std(distance_errors)
+            mean_error_angle = np.mean(angle_errors)
+            std_error_angle = np.std(angle_errors)
+            mean_model_time = np.mean(model_times)
+            std_model_time = np.std(model_times)
+            mean_calc_time = np.mean(calc_times)
+            std_calc_time = np.std(calc_times)
+            rospy.loginfo(f"    Gaze detection rate: {gaze_detection_rate:.2f}% ({gaze_detected_count}/{frames_read_count})")
+            rospy.loginfo(f"    ET session mean distance error: {mean_error_distance:.3f}±{std_error_distance:.3f}m over {len(distance_errors)} frames")
+            rospy.loginfo(f"    ET session mean angle error: {mean_error_angle:.3f}±{std_error_angle:.3f}m over {len(angle_errors)} frames")
+            rospy.loginfo(f"    Model time: {mean_model_time:.3f}±{std_model_time:.3f}s")
+
+            summary_log_path = os.path.join(self.results_dir, f"{user_id}_{session}_summary_3DGazeNet.txt")
+            with open(summary_log_path, "w") as f:
+                summary_line = (
+                    f"Summary: "
+                    f"GazeDetectionRate={gaze_detection_rate:.2f}%, "
+                    f"FramesWithGaze={gaze_detected_count}, "
+                    f"FramesProcessed={frames_read_count}, "
+                    f"MeanDistanceError={mean_error_distance:.6f}, StdDistanceError={std_error_distance:.6f}, "
+                    f"MeanAngleError={mean_error_angle:.6f}, StdAngleError={std_error_angle:.6f}, "
+                    f"MeanModelTime={mean_model_time:.6f}, StdModelTime={std_model_time:.6f}, "
+                    f"MeanCalcTime={mean_calc_time:.6f}, StdCalcTime={std_calc_time:.6f}\n"
+                )
+                f.write(summary_line)
+
+        else:
+            rospy.loginfo(f"    No valid frames processed for ET session")
+            rospy.loginfo(f"    Gaze detection rate: {gaze_detection_rate:.2f}% ({gaze_detected_count}/{frames_read_count})")
+            summary_log_path = os.path.join(self.results_dir, f"{user_id}_{session}_summary_3DGazeNet.txt")
+            with open(summary_log_path, "w") as f:
+                summary_line = (
+                    f"Summary: "
+                    f"GazeDetectionRate={gaze_detection_rate:.2f}%, "
+                    f"FramesWithGaze={gaze_detected_count}, "
+                    f"FramesProcessed={frames_read_count}, "
+                    f"No frames with successful 3D correspondence.\n"
+                )
+                f.write(summary_line)
+
+
+                
 
     def process_mt_session(self, user_id: str, session: str):
         rgb_file, depth_file = self.dataset_helper.get_video_files(user_id, session)
@@ -312,8 +481,6 @@ class GazeDetectionEvaluator:
             # Write header
             f.write("frame_idx,error_distance,error_angle,marker_idx,model_time,calc_time\n")
             for idx, event in enumerate(mouse_events):
-                if idx < 1:  # Skip first 3000 frames
-                    continue
                 if event == -1:
                     continue
                 rospy.loginfo(f"Processing frame {idx} for {user_id} {session}")
@@ -438,7 +605,7 @@ class GazeDetectionEvaluator:
         else:
             rospy.loginfo(f"    No valid frames processed for MT session")
             rospy.loginfo(f"    Gaze detection rate: {gaze_detection_rate:.2f}% ({gaze_detected_count}/{frames_read_count})")
-            summary_log_path = os.path.join(self.results_dir, f"{user_id}_{session}_summary.txt")
+            summary_log_path = os.path.join(self.results_dir, f"{user_id}_{session}_summary_GazeNet.txt")
             with open(summary_log_path, "w") as f:
                 summary_line = (
                     f"Summary: "
@@ -448,16 +615,6 @@ class GazeDetectionEvaluator:
                     f"No frames with successful 3D correspondence.\n"
                 )
                 f.write(summary_line)
-
-    def process_om_session(self, user_id: str, session: str):
-        rgb_file, depth_file = self.dataset_helper.get_video_files(user_id, session)
-        speech_labels = self.dataset_helper.load_speech_labels(user_id, session)
-        # Log loaded data shapes
-        rospy.loginfo(f"    RGB file: {rgb_file}")
-        rospy.loginfo(f"    Depth file: {depth_file}")
-        if speech_labels is not None:
-            rospy.loginfo(f"    Speech labels: {len(speech_labels)} lines")
-        # TODO: Add OM-specific evaluation logic here
 
     def get_depth_at_pixel(self, depth_frame: Optional[np.ndarray], u_norm: float, v_norm: float, filtering: bool = True, filter_width: int = 3) -> Optional[float]:
         # Extract the depth value from the depth frame at normalized coordinates (u_norm, v_norm)
