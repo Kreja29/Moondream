@@ -154,11 +154,11 @@ class GazeDetectionEvaluator:
     def evaluate_dataset(self):
         rospy.loginfo(f"Evaluating dataset in {self.dataset_dir}")
         id_list = self.dataset_helper.get_id_list()
-        session_order = ['MT', 'ET_center', 'OM1']
+        session_order = ['ET_center', 'MT']
         total_processed = 0
         for user_id in id_list[:]: 
-            if not user_id == 'ManiGaze_ID_17':
-                continue
+            #if not user_id == 'ManiGaze_ID_17':
+            #    continue
             
             rospy.loginfo(f"Processing {user_id}")
             for session in session_order:
@@ -171,8 +171,6 @@ class GazeDetectionEvaluator:
                     self.process_mt_session(user_id, session)
                 elif session == 'ET_center':
                     self.process_et_center_session(user_id, session)
-                elif session == 'OM1':
-                    self.process_om_session(user_id, session)
                 else:
                     rospy.logwarn(f"  Unknown session type: {session}")
                     continue
@@ -228,13 +226,11 @@ class GazeDetectionEvaluator:
         frames_read_count = 0
         gaze_detected_count = 0
         # Prepare error log file in results directory
-        error_log_path = os.path.join(self.results_dir, f"{user_id}_{session}_frame_errors.txt")
+        error_log_path = os.path.join(self.results_dir, f"{user_id}_{session}_frame_errors_MoonDream.txt")
         with open(error_log_path, "w") as f:
             # Write header
             f.write("frame_idx,error,x_error,y_error,z_error,marker_idx,model_time,calc_time\n")
             for idx, event in enumerate(mouse_events):
-                if idx < 1:  # Skip first 3000 frames
-                    continue
                 if event == -1:
                     continue
                 rospy.loginfo(f"Processing frame {idx} for {user_id} {session}")
@@ -267,6 +263,7 @@ class GazeDetectionEvaluator:
                 model_times.append(t1 - t0)
 
                 rospy.loginfo(f"    gaze {gaze_2d}")
+                rospy.loginfo(f"    model processing time: {t1 - t0:.3f}s")
 
                 u_norm, v_norm = gaze_2d  # normalized [0, 1]
 
@@ -276,7 +273,6 @@ class GazeDetectionEvaluator:
                 # Reconstruct a correct depth frame
                 if depth_frame is not None:
                     depth_m = self.reconstruct_depth_16bit(depth_frame)
-                    rospy.loginfo(f"    Depth min/max: {depth_m.min()} / {depth_m.max()}, dtype={depth_m.dtype}") #temp
                 else:
                     depth_m = None
 

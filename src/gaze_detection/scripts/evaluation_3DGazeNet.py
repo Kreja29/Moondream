@@ -226,7 +226,6 @@ class GazeDetectionEvaluator:
         rospy.loginfo(f"Evaluating dataset in {self.dataset_dir}")
         id_list = self.dataset_helper.get_id_list()
         session_order = ['ET_center', 'MT']
-        session_order = ['ET_center', 'MT']
         total_processed = 0
         for user_id in id_list[:]: 
             #if not user_id == 'ManiGaze_ID_17':
