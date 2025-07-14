@@ -375,7 +375,7 @@ class GazeDetectionEvaluator:
                     self.K_rgb, self.K_d, self.R_extr, self.T_extr,
                     rgb_shape=frame.shape,
                     gaze_vec3d_rgb=gaze_vec3d,
-                    visualize=visual  # Set to True to visualize the 3D points and line
+                    visualize=True  # Set to True to visualize the 3D points and line
                 ) if depth_m is not None else (None, None)
 
                 if eye_center_pred_3d_depth is None or gaze_point_3d_depth is None:

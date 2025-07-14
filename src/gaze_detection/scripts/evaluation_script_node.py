@@ -281,7 +281,7 @@ class GazeDetectionEvaluator:
                     u_norm, v_norm, depth_m,
                     self.K_rgb, self.K_d, self.R_extr, self.T_extr,
                     rgb_shape=frame.shape,
-                    visualize=False  # Set to True to visualize the 3D points and line
+                    visualize=True  # Set to True to visualize the 3D points and line
                 ) if depth_m is not None else None
                 rospy.loginfo(f"    3D point in depth camera coordinates: {pred_3d_depth}")  #temp
                 if pred_3d_depth is None:
